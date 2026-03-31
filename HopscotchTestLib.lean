@@ -1,0 +1,7 @@
+import HopscotchTestLib.BehaviorTests
+import HopscotchTestLib.GitIOTests
+import HopscotchTestLib.IOTests
+import HopscotchTestLib.LakefileReadTests
+import HopscotchTestLib.MockLake
+import HopscotchTestLib.ToolchainIOTests
+import HopscotchTestLib.UtilTests
