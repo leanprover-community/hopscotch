@@ -60,6 +60,19 @@ private def reservoirDepBlock : String :=
     ""
   ]
 
+/-- A `lakefile.lean` where the bare dependency name is quoted (e.g. `require "mathlib" from git`).
+    This is valid Lake DSL and should be recognised alongside the unquoted form. -/
+private def quotedBareNameBlock : String :=
+  String.intercalate "\n" [
+    "import Lake",
+    "open Lake DSL",
+    "",
+    "package «PhysLib»",
+    "",
+    "require \"mathlib\" from git \"https://github.com/leanprover-community/mathlib4.git\" @ \"v4.28.0\"",
+    ""
+  ]
+
 /-- A `lakefile.lean` with a scoped Reservoir dep using `@ git "rev"`. -/
 private def scopedAtGitBlock : String :=
   String.intercalate "\n" [
@@ -191,6 +204,37 @@ private def «rewriteLeanContents rewrites scoped @ git rev» : IO Unit := do
         "rewritten content should not contain the old @ git rev"
 
 -- ---------------------------------------------------------------------------
+-- Quoted bare name tests
+-- ---------------------------------------------------------------------------
+
+/-- Scenario: `readLeanGitUrl` recognises `require "mathlib"` (quoted bare name). -/
+private def «readLeanGitUrl handles quoted bare name» : IO Unit := do
+  withTempDir "hopscotch-lean-quoted-bare-url" fun dir => do
+    let path ← writeLakefileLean dir quotedBareNameBlock
+    let result ← LakefileProcessor.readLeanGitUrl path "mathlib"
+    assertEq (some "https://github.com/leanprover-community/mathlib4.git") result
+      "readLeanGitUrl should recognise a quoted bare dependency name"
+
+/-- Scenario: `readLeanPinnedRev` recognises `require "mathlib"` (quoted bare name). -/
+private def «readLeanPinnedRev handles quoted bare name» : IO Unit := do
+  withTempDir "hopscotch-lean-quoted-bare-rev" fun dir => do
+    let path ← writeLakefileLean dir quotedBareNameBlock
+    let result ← LakefileProcessor.readLeanPinnedRev path "mathlib"
+    assertEq (some "v4.28.0") result
+      "readLeanPinnedRev should recognise a quoted bare dependency name"
+
+/-- Scenario: `rewriteLeanContents` can rewrite a rev in a quoted-bare-name require block. -/
+private def «rewriteLeanContents rewrites quoted bare name block» : IO Unit := do
+  let result := LakefileProcessor.rewriteLeanContents quotedBareNameBlock "mathlib" "newrev"
+  match result with
+  | .error e => fail s!"rewriteLeanContents failed unexpectedly: {e}"
+  | .ok rewritten =>
+      assertTrue (rewritten.contains "@ \"newrev\"")
+        "rewritten content should contain the new rev annotation"
+      assertTrue (!rewritten.contains "@ \"v4.28.0\"")
+        "rewritten content should not contain the old rev annotation"
+
+-- ---------------------------------------------------------------------------
 -- Rewrite path tests
 -- ---------------------------------------------------------------------------
 
@@ -292,6 +336,9 @@ def suite : TestSuite := #[
   test_case «readLeanPinnedRev returns none for a path dep»,
   test_case «readLeanPinnedRev returns none for a Reservoir dep»,
   test_case «readLeanPinnedRev returns none when rev is absent»,
+  test_case «readLeanGitUrl handles quoted bare name»,
+  test_case «readLeanPinnedRev handles quoted bare name»,
+  test_case «rewriteLeanContents rewrites quoted bare name block»,
   test_case «readLeanPinnedRev returns rev from scoped @ git dep»,
   test_case «readLeanGitUrl returns none for scoped @ git dep»,
   test_case «readLeanScope returns scope from scoped dep name»,
