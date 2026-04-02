@@ -225,8 +225,8 @@ private def leanRequirePrefixes (depName : String) : Array String :=
        , "require \"" ++ scope ++ "\"/\"" ++ name ++ "\""
        ]
   | _ =>
-      -- Bare name: `require depName`.
-      #["require " ++ depName]
+      -- Bare name: `require depName` or `require "depName"` (quoted form is also valid Lake DSL).
+      #["require " ++ depName, "require \"" ++ depName ++ "\""]
 
 /--
 Scan `lines` and collect every `require` block whose dependency name equals `depName`.
