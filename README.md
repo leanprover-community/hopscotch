@@ -11,13 +11,19 @@ The primary use case is checking whether a downstream project (one that depends 
 | `1` | A failure boundary was found (the tool ran correctly; the downstream failed). |
 | `2` | An unexpected error in the tool itself (bad arguments, network error, corrupt state, etc.). |
 
-## Building
+## Getting a binary
+
+Pre-built binaries for Linux (x86_64), macOS (x86_64 and arm64), and Windows (x86_64) are attached to each [GitHub release](https://github.com/leanprover-community/hopscotch/releases/latest). Download the one for your platform and place it somewhere on your `PATH`.
+
+## Building from source
+
+To build from source, run the following from the repo root:
 
 ```bash
-cd tool
 lake build hopscotch
-# binary at: .lake/build/bin/hopscotch
 ```
+
+The binary will be located at `.lake/build/bin/hopscotch`. You can add it to your `PATH` or invoke it directly.
 
 ## Modes
 

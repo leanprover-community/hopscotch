@@ -9,12 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install Lean
-        run: |
-          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-          "$HOME/.elan/bin/elan" toolchain install "$(tr -d '\n' < tool/lean-toolchain)"
-      - name: Build
-        run: lake build
-      - name: Test
-        run: lake test
+      - uses: leanprover/lean-action@v1
+        with:
+          build: true
+          test: true
