@@ -134,7 +134,7 @@ rm -rf MyProject/.lake/hopscotch
 
 ## Step-by-step example: updating a mathlib downstream
 
-Suppose you maintain `MyProject`, a Lean 4 project that depends on mathlib. mathlib has released a batch of new commits and you want to know which ones your project still builds against — and find the exact commit where it breaks.
+Suppose you maintain `MyProject`, a Lean 4 project that depends on mathlib. mathlib has released a batch of new commits and you want to find the exact commit where your project breaks. Because mathlib moves fast — dozens of commits a day — you almost always want bisect: it identifies the first bad commit with roughly log₂(N) probes instead of N.
 
 ### 1. Check your downstream's current pin
 
@@ -148,7 +148,94 @@ git = "https://github.com/leanprover-community/mathlib4"
 rev = "a1b2c3d4"   # currently pinned here
 ```
 
-### 2. Run linear mode to walk forward through mathlib commits
+### 2. Run bisect to find the breaking commit
+
+Bisect is the default — no `--scan-mode` flag needed:
+
+```bash
+hopscotch dep mathlib \
+  --project-dir ./MyProject \
+  --from a1b2c3d4 \
+  --to origin/master
+```
+
+`hopscotch` fetches the commit range from GitHub (set `GITHUB_TOKEN` to avoid rate limits), validates that the last commit in the range actually fails, then binary-searches. Note that `--from` is exclusive — `a1b2c3d4` itself is not tested.
+
+```
+[2026-03-31T12:00:00Z] Validating last commit e5f6a7b8 (47/47) — must fail to proceed
+[2026-03-31T12:00:01Z] Running lake update mathlib
+[2026-03-31T12:01:30Z] Finished lake update mathlib (log file: .lake/hopscotch/logs/46-e5f6a7b8cd90-bump.log)
+[2026-03-31T12:01:30Z] Running lake build
+[2026-03-31T12:05:00Z] Finished lake build (log file: .lake/hopscotch/logs/46-e5f6a7b8cd90-build.log)   ← fails ✓
+[2026-03-31T12:05:00Z] Probing commit 6c7d8e9f (24/47)
+[2026-03-31T12:05:01Z] Running lake update mathlib
+…
+[2026-03-31T12:10:00Z] Finished lake build (log file: .lake/hopscotch/logs/23-6c7d8e9fab12-build.log)   ← passes
+[2026-03-31T12:10:00Z] Probing commit d1e2f3a4 (36/47)
+…
+[2026-03-31T12:15:00Z] Finished lake build (log file: …)   ← fails
+[2026-03-31T12:15:00Z] Probing commit 7b8c9d0e (30/47)
+…
+[2026-03-31T12:20:00Z] Finished lake build (log file: …)   ← passes
+[2026-03-31T12:20:00Z] Probing commit 4f5a6b7c (33/47)
+…
+[2026-03-31T12:25:00Z] Finished lake build (log file: …)   ← fails
+[2026-03-31T12:25:00Z] Probing commit 9e0f1a2b (32/47)
+…
+[2026-03-31T12:30:00Z] Finished lake build (log file: …)   ← passes
+[2026-03-31T12:30:00Z] knownGood (32) and knownBad (33) are adjacent — boundary found.
+```
+
+Six probes instead of 47.
+
+### 3. Examine the failure boundary
+
+The summary records the exact boundary:
+
+```bash
+cat MyProject/.lake/hopscotch/summary.md
+# Bisect result
+Last known good: 9e0f1a2b (32/47)
+First known bad: 4f5a6b7c (33/47)
+```
+
+Inspect the build log for the bad commit:
+
+```bash
+cat MyProject/.lake/hopscotch/logs/32-4f5a6b7cab12-build.log
+# MyProject/Foo.lean:12:5: error: unknown identifier 'Mathlib.SomeRenamedLemma'
+```
+
+### 4. Fix the issue in your project
+
+Edit `MyProject/Foo.lean` to use the updated API. With the lakefile still pinned to `4f5a6b7c` from the last probe, verify the fix locally:
+
+```bash
+cd MyProject && lake build
+```
+
+### 5. Commit and start a fresh session
+
+Bisect's goal is identification, not incremental repair — once it finds the boundary the session is complete. Commit your fix, clear the state, and run again to check whether the rest of the range is clean:
+
+```bash
+cd MyProject && git add -p && git commit -m "fix: update to renamed Mathlib.SomeRenamedLemma"
+rm -rf MyProject/.lake/hopscotch
+
+hopscotch dep mathlib \
+  --project-dir ./MyProject \
+  --from a1b2c3d4 \
+  --to origin/master
+```
+
+If there is only one regression in the range this second run will complete with all commits passing. If there are multiple regressions, bisect will find the next boundary and you repeat.
+
+### Aside: Linear mode for incremental iteration
+
+`--scan-mode linear` steps through commits oldest-to-newest and stops at the first failure. It is useful when:
+
+- you are testing a single commit (`--from <last-good> --to <candidate>`)
+- you prefer to fix each regression before moving to the next, letting you accumulate fixes across a long walk
 
 ```bash
 hopscotch dep mathlib \
@@ -158,75 +245,7 @@ hopscotch dep mathlib \
   --scan-mode linear
 ```
 
-`hopscotch` fetches the commit range from GitHub (set `GITHUB_TOKEN` to avoid rate limits), then starts probing each commit. Note that `--from` is exclusive — `a1b2c3d4` itself is not tested; probing begins at the next commit after it.
-
-```
-[2026-03-31T12:00:00Z] Attempting commit b2c3d4e5 (1/47)
-[2026-03-31T12:00:01Z] Running lake update mathlib
-[2026-03-31T12:01:30Z] Finished lake update mathlib (log file: .lake/hopscotch/logs/0-b2c3d4e5ab12-bump.log)
-[2026-03-31T12:01:30Z] Running lake build
-[2026-03-31T12:05:00Z] Finished lake build (log file: .lake/hopscotch/logs/0-b2c3d4e5ab12-build.log)
-…
-[2026-03-31T12:30:00Z] Attempting commit c3d4e5f6 (3/47)
-[2026-03-31T12:30:01Z] Running lake update mathlib
-[2026-03-31T12:31:30Z] Finished lake update mathlib (log file: .lake/hopscotch/logs/2-c3d4e5f6a1b2-bump.log)
-[2026-03-31T12:31:30Z] Running lake build
-[2026-03-31T12:35:00Z] Finished lake build (log file: .lake/hopscotch/logs/2-c3d4e5f6a1b2-build.log)
-```
-
-The run stops. Check the build log for the full output.
-
-### 3. Examine the failure
-
-```bash
-cat MyProject/.lake/hopscotch/logs/2-c3d4e5f6a1b2-build.log
-# MyProject/Foo.lean:12:5: error: unknown identifier 'Mathlib.SomeRenamedLemma'
-```
-
-### 4. Fix the issue in your project
-
-Edit `MyProject/Foo.lean` to use the updated API. After fixing:
-
-```bash
-cd MyProject && lake build   # verify the fix works at the failing commit
-```
-
-### 5. Resume from where you left off
-
-Because `hopscotch` serializes state after each step, you can resume without re-testing commits that already passed:
-
-```bash
-hopscotch dep mathlib \
-  --project-dir ./MyProject \
-  --from a1b2c3d4 \
-  --to origin/master \
-  --allow-dirty-workspace   # skip git-cleanliness check since you made edits
-```
-
-`hopscotch` picks up at commit `c3d4e5f6` with your fix applied and continues:
-
-```
-[2026-03-31T14:00:00Z] Attempting commit c3d4e5f6 (3/47)
-[2026-03-31T14:00:01Z] Running lake update mathlib
-…
-[2026-03-31T14:05:00Z] Finished lake build (log file: …)   ← now passes
-…
-```
-
-Repeat steps 3–5 for each failure until the full range passes.
-
-### 6. Pinpoint a breaking commit with bisect
-
-If the commit range is large and you just want to identify the culprit quickly without fixing things incrementally, omit `--scan-mode` (bisect is the default) or pass it explicitly:
-
-```bash
-hopscotch dep mathlib \
-  --project-dir ./MyProject \
-  --from a1b2c3d4 \
-  --to origin/master
-```
-
-`hopscotch` binary-searches the range, probing roughly log₂(N) commits instead of all N. The output format is the same per-step timestamped log as linear mode; the summary at `.lake/hopscotch/summary.md` records the last known-good commit and the first known-bad commit.
+Because linear mode serializes state after each step, rerunning the same command after a failure resumes from exactly where it stopped. Once the previously-failing commit passes, `hopscotch` checks that the working tree is clean before advancing — ensuring every fix is committed before the session moves on. Pass `--allow-dirty-workspace` to skip this check when you are iterating on a fix across several commits before committing.
 
 ### Using a commits file
 
