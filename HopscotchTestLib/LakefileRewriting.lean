@@ -327,7 +327,8 @@ def suite : TestSuite := #[
   test_case «lakefile dependency rev rewriting basic test with missing rev lean_lib multiblock»,
   test_case «lakefile dependency rev rewriting: missing rev»,
   test_case «lakefile dependency rev rewriting: missing rev multiblock»,
-  test_case «lakefile dependency rev rewriting: weird whitespace»
+  test_case «lakefile dependency rev rewriting: weird whitespace»,
+  test_case «lakefile dependency failed rev rewriting»
 ]
 
 end HopscotchTestLib.LakefileRewriting
