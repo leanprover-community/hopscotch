@@ -13,6 +13,10 @@ private def preferredNewline (contents : String) : String :=
 private def isRequireHeader (line : String) : Bool :=
   line.trimAscii.copy == "[[require]]"
 
+/-- Detect any TOML section header (`[table]` or `[[array-of-tables]]`) after trimming indentation. -/
+private def isTomlSectionHeader (line : String) : Bool :=
+  line.trimAscii.startsWith "["
+
 /-- Read `name = "..."` or `rev = "..."` values from a trimmed TOML assignment line.
     Splits on `"` to extract the value; does not handle escaped quotes inside values. -/
 private def quotedAssignmentValue? (key : String) (line : String) : Option String :=
@@ -62,7 +66,7 @@ private def findNamedRequireBlocks (lines : Array String) (dependencyName : Stri
       let mut blockEnd := lines.size
       let mut j := blockStart
       while j < lines.size do
-        if isRequireHeader lines[j]! then
+        if isTomlSectionHeader lines[j]! then
           blockEnd := j
           break
         j := j + 1
@@ -70,6 +74,9 @@ private def findNamedRequireBlocks (lines : Array String) (dependencyName : Stri
       let hasName := (lines.extract blockStart blockEnd).any
         fun line => quotedAssignmentValue? "name" line == some dependencyName
       if hasName then
+        -- Decrement blockEnd while it's whitespace or newline
+        while blockEnd > blockStart && lines[blockEnd - 1]!.isEmpty do
+          blockEnd := blockEnd - 1
         blocks := blocks.push (blockStart, blockEnd)
       i := blockEnd
     else

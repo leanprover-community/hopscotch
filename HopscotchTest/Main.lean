@@ -6,6 +6,7 @@ import HopscotchTestLib.LakefileLeanReadTests
 import HopscotchTestLib.ParseTests
 import HopscotchTestLib.ToolchainIOTests
 import HopscotchTestLib.UtilTests
+import HopscotchTestLib.LakefileRewriting
 
 open HopscotchTestLib
 
@@ -37,6 +38,7 @@ def testSuitesToRun : IO (Array (String × TestSuite)) := do
     ("ParseTests",            ParseTests.suite),
     ("IOTests",               IOTests.suite),
     ("LakefileReadTests",     LakefileReadTests.suite),
+    ("LakefileRewriting",     LakefileRewriting.suite),
     ("LakefileLeanReadTests", LakefileLeanReadTests.suite),
     ("ToolchainIOTests",      ToolchainIOTests.suite),
     ("UtilTests",             UtilTests.suite)
