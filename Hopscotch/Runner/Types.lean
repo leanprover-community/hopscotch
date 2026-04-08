@@ -37,6 +37,14 @@ structure RunStrategy where
   defaultFromRef : System.FilePath → IO (Option String) := fun _ => pure none
   /-- Default git URL for range-mode commit resolution. -/
   defaultGitUrl : System.FilePath → IO (Option String) := fun _ => pure none
+  /-- Compute the log file name prefix for one probe.
+      `stepNum` is the zero-based count of probes completed so far;
+      `posIndex` is the item's position in the search list.
+      Default: single number when they coincide (linear), "{N}-{M}" when they differ (bisect). -/
+  logPrefix : (stepNum posIndex : Nat) → String :=
+    fun stepNum posIndex =>
+      if stepNum == posIndex then toString posIndex
+      else s!"{stepNum}-{posIndex}"
 
 /-- User-facing configuration for one `hopscotch` execution. -/
 structure Config where

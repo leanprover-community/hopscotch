@@ -143,13 +143,15 @@ def save (paths : Paths) (state : PersistedState) : IO Unit := do
   ensureDirs paths
   writeJsonFile paths.statePath state
 
-/-- Compute the deterministic log path for one commit/stage pair. -/
-def logPath (paths : Paths) (index : Nat) (commit : String) (stage : RunStage) : System.FilePath :=
+/-- Compute the deterministic log path for one commit/stage pair.
+    `namePrefix` is the log file name prefix produced by the run strategy (e.g. "3" in linear mode,
+    "1-5" in bisect mode where step 1 probes position 5). -/
+def logPath (paths : Paths) (namePrefix : String) (commit : String) (stage : RunStage) : System.FilePath :=
   let stageName :=
     match stage with
     | .bump => "bump"
     | .build => "build"
     | .gitCheck => "git-check"
-  paths.logsDir / s!"{index}-{sanitizeForFileName (shortCommit commit)}-{stageName}.log"
+  paths.logsDir / s!"{namePrefix}-{sanitizeForFileName (shortCommit commit)}-{stageName}.log"
 
 end Hopscotch.State

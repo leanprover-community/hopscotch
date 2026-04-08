@@ -129,7 +129,7 @@ Pass `--allow-dirty-workspace` to override this too, if you know what you are do
 
 - `state.json` — restartable state (committed index, current stage, bisect window, etc.)
 - `summary.md` — human-readable outcome
-- `logs/` — per-step build logs (e.g. `3-abc12345-build.log`)
+- `logs/` — per-step build logs; names encode the step counter and list position (e.g. `3-abc12345-build.log` in linear mode, `1-23-abc12345-build.log` in bisect mode)
 
 If `hopscotch` is interrupted at any point, rerunning the same command resumes from exactly where it left off without repeating completed steps.
 
@@ -171,13 +171,13 @@ hopscotch dep mathlib \
 ```
 [2026-03-31T12:00:00Z] Validating last commit e5f6a7b8 (47/47) — must fail to proceed
 [2026-03-31T12:00:01Z] Running lake update mathlib
-[2026-03-31T12:01:30Z] Finished lake update mathlib (log file: .lake/hopscotch/logs/46-e5f6a7b8cd90-bump.log)
+[2026-03-31T12:01:30Z] Finished lake update mathlib (log file: .lake/hopscotch/logs/0-46-e5f6a7b8cd90-bump.log)
 [2026-03-31T12:01:30Z] Running lake build
-[2026-03-31T12:05:00Z] Finished lake build (log file: .lake/hopscotch/logs/46-e5f6a7b8cd90-build.log)   ← fails ✓
+[2026-03-31T12:05:00Z] Finished lake build (log file: .lake/hopscotch/logs/0-46-e5f6a7b8cd90-build.log)   ← fails ✓
 [2026-03-31T12:05:00Z] Probing commit 6c7d8e9f (24/47)
 [2026-03-31T12:05:01Z] Running lake update mathlib
 …
-[2026-03-31T12:10:00Z] Finished lake build (log file: .lake/hopscotch/logs/23-6c7d8e9fab12-build.log)   ← passes
+[2026-03-31T12:10:00Z] Finished lake build (log file: .lake/hopscotch/logs/1-23-6c7d8e9fab12-build.log)   ← passes
 [2026-03-31T12:10:00Z] Probing commit d1e2f3a4 (36/47)
 …
 [2026-03-31T12:15:00Z] Finished lake build (log file: …)   ← fails
@@ -209,7 +209,7 @@ First known bad: 4f5a6b7c (33/47)
 Inspect the build log for the bad commit:
 
 ```bash
-cat MyProject/.lake/hopscotch/logs/32-4f5a6b7cab12-build.log
+cat MyProject/.lake/hopscotch/logs/4-32-4f5a6b7cab12-build.log
 # MyProject/Foo.lean:12:5: error: unknown identifier 'Mathlib.SomeRenamedLemma'
 ```
 

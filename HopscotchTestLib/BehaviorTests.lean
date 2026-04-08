@@ -178,7 +178,7 @@ private def «bisect summary formatting» : IO Unit := do
         commit := "bad4"
         outcome := .failure
         stage := some .build
-        logPath := some "/tmp/demo/.lake/hopscotch/logs/4-bad4-build.log"
+        logPath := some "/tmp/demo/.lake/hopscotch/logs/0-4-bad4-build.log"
       },
       {
         index := 3
@@ -208,7 +208,7 @@ private def «bisect summary formatting» : IO Unit := do
       currentCommit := some "bad4"
       status := .failed
       stage := some .build
-      lastLogPath := some "/tmp/demo/.lake/hopscotch/logs/4-bad4-build.log"
+      lastLogPath := some "/tmp/demo/.lake/hopscotch/logs/0-4-bad4-build.log"
       bisect := some { bisect with knownGoodIndex := 3 }
       lastSuccessfulCommit := some "mid3"
   }
@@ -225,7 +225,7 @@ private def «bisect summary formatting» : IO Unit := do
     "final bisect summaries should name the previous known-good commit"
   assertContains "Failure stage: lake build" failedPlain
     "final bisect summaries should retain the failing stage"
-  assertContains "Log file: /tmp/demo/.lake/hopscotch/logs/4-bad4-build.log" failedPlain
+  assertContains "Log file: /tmp/demo/.lake/hopscotch/logs/0-4-bad4-build.log" failedPlain
     "final bisect summaries should include the culprit log path"
 
 /-- Scenario: `parseRepoId` handles all supported GitHub URL forms. -/

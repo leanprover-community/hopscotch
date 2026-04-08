@@ -36,9 +36,10 @@ verification restarts from the saved stage. This handles the case where the runn
 was interrupted between the bump succeeding and a verify step completing.
 -/
 private def runProbe (config : Config) (paths : Paths) (base : PersistedState)
-    (index : Nat) (commit : String)
+    (stepNum : Nat) (index : Nat) (commit : String)
     (emit : ConsoleStyle → String → IO Unit) : IO ProbeRunResult := do
   let bumpStep := config.strategy.mkBump commit
+  let namePrefix := config.strategy.logPrefix stepNum index
   -- Determine whether we are resuming at a specific stage of this exact commit.
   let resumeStage? : Option RunStage :=
     if base.status == .running && base.nextIndex == index && base.currentCommit == some commit
@@ -60,7 +61,7 @@ private def runProbe (config : Config) (paths : Paths) (base : PersistedState)
   -- Bump phase: apply the version then fetch. Skipped when resuming mid-verify.
   if !resumingVerify then
     let _ ← saveState paths <| buildRunningState base index commit (some bumpStep.stage)
-    let bumpLogPath := State.logPath paths index commit bumpStep.stage
+    let bumpLogPath := State.logPath paths namePrefix commit bumpStep.stage
     emit .running s!"[{← nowUtcString}] Running {bumpStep.label}"
     let bumpOk ← bumpStep.run paths.projectDir bumpLogPath config.quiet
     emit (if bumpOk then .success else .failure)
@@ -75,7 +76,7 @@ private def runProbe (config : Config) (paths : Paths) (base : PersistedState)
         config.strategy.verify.findIdx? (·.stage == stage) |>.getD 0
   for step in config.strategy.verify.extract startAt config.strategy.verify.size do
     let _ ← saveState paths <| buildRunningState base index commit (some step.stage)
-    let verifyLogPath := State.logPath paths index commit step.stage
+    let verifyLogPath := State.logPath paths namePrefix commit step.stage
     emit .running s!"[{← nowUtcString}] Running {step.label}"
     let stepOk ← step.run paths.projectDir verifyLogPath config.quiet
     emit (if stepOk then .success else .failure)
@@ -110,7 +111,7 @@ private def runAdvance (config : Config) (paths : Paths) (commits : Array String
   let mut lastSummary : String := ""
   for index in [state.nextIndex:commits.size] do
     let commit := commits[index]!
-    match ← runProbe config paths state index commit emit with
+    match ← runProbe config paths state index index commit emit with
     | .failure stage logPath =>
         let (_, summary) ← saveState paths <| buildFailureState state index commit stage logPath
         return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
@@ -123,7 +124,7 @@ private def runAdvance (config : Config) (paths : Paths) (commits : Array String
               emit .running
                 s!"[{← nowUtcString}] Warning: git status unavailable; skipping dirty-workspace verification"
           | .dirty =>
-              let buildLogPath := State.logPath paths index commit .build
+              let buildLogPath := State.logPath paths (config.strategy.logPrefix index index) commit .build
               emit .failure
                 s!"[{← nowUtcString}] Resume blocked: commit the fix for {commit} or rerun with --allow-dirty-workspace"
               let (_, summary) ← saveState paths <| buildFailureState state index commit .gitCheck buildLogPath
@@ -206,7 +207,8 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
               return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
           | none =>
               throw <| IO.userError "bisect resolution is missing the failing probe result"
-    match ← runProbe config paths state probeIndex commit emit with
+    let stepNum := bisect.probeResults.size
+    match ← runProbe config paths state stepNum probeIndex commit emit with
     | .success =>
         if !bisect.verifiedBad then
           throw <| IO.userError
