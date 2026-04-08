@@ -184,14 +184,40 @@ private def parseToolchain (args : List String) : IO Runner.Config := do
   buildToolchainConfig state
 
 -- ---------------------------------------------------------------------------
+-- clean subcommand
+-- ---------------------------------------------------------------------------
+
+private def parseCleanOptions (projectDir : Option System.FilePath)
+    (args : List String) : IO System.FilePath := do
+  match args with
+  | [] => return projectDir.getD "."
+  | "--project-dir" :: dir :: rest =>
+      parseCleanOptions (some (System.FilePath.mk dir)) rest
+  | _ =>
+      throw <| IO.userError "usage: hopscotch clean [--project-dir DIR]"
+
+-- ---------------------------------------------------------------------------
 -- Entrypoint
 -- ---------------------------------------------------------------------------
 
-/-- Parse CLI arguments into a `Runner.Config`, dispatching on the subcommand. -/
-def parseArgs (args : List String) : IO Runner.Config := do
+/-- The action to perform, parsed from CLI arguments. -/
+inductive Command where
+  | run   (config : Runner.Config)
+  | clean (projectDir : System.FilePath)
+
+/-- Parse CLI arguments into a `Command`, dispatching on the subcommand. -/
+def parseArgs (args : List String) : IO Command := do
   match args with
-  | "dep" :: rest       => parseDep rest
-  | "toolchain" :: rest => parseToolchain rest
-  | _                   => throw <| IO.userError (depUsage ++ "\n" ++ toolchainUsage)
+  | "dep" :: rest       => return .run (← parseDep rest)
+  | "toolchain" :: rest => return .run (← parseToolchain rest)
+  | "clean" :: rest     =>
+      let projectDir ← parseCleanOptions none rest
+      return .clean projectDir
+  | _ =>
+      throw <| IO.userError
+        ("usage: hopscotch <subcommand> [OPTIONS]\n" ++
+         "Subcommands: dep, toolchain, clean\n\n" ++
+         depUsage ++ "\n" ++ toolchainUsage ++ "\n" ++
+         "usage: hopscotch clean [--project-dir DIR]")
 
 end Hopscotch.CLI

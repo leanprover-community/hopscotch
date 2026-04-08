@@ -27,10 +27,11 @@ The binary will be located at `.lake/build/bin/hopscotch`. You can add it to you
 
 ## Modes
 
-`hopscotch` has two subcommands:
+`hopscotch` has three subcommands:
 
 - **`dep`** — test a range of dependency commits against the downstream project.
 - **`toolchain`** — test a list of Lean toolchain strings against the downstream project.
+- **`clean`** — delete the session state for a project, so a new session can be started.
 
 Within each subcommand, two execution strategies are available, selected with `--scan-mode [linear|bisect]`:
 
@@ -132,10 +133,10 @@ Pass `--allow-dirty-workspace` to override this too, if you know what you are do
 
 If `hopscotch` is interrupted at any point, rerunning the same command resumes from exactly where it left off without repeating completed steps.
 
-Each project directory holds **one active session at a time**. Once a session has `completed` or `failed`, `hopscotch` will not start a new run — it will just report the existing result. To test a different commit range, or to re-run from scratch, you must first clear the session state:
+Each project directory holds **one active session at a time**. Once a session has `completed` or `failed`, `hopscotch` will not start a new run — it will just report the existing result. To test a different commit range, or to re-run from scratch, clear the session state with:
 
 ```bash
-rm -rf MyProject/.lake/hopscotch
+hopscotch clean --project-dir MyProject
 ```
 
 ## Step-by-step example: updating a mathlib downstream
@@ -226,7 +227,7 @@ Bisect's goal is identification, not incremental repair — once it finds the bo
 
 ```bash
 cd MyProject && git add -p && git commit -m "fix: update to renamed Mathlib.SomeRenamedLemma"
-rm -rf MyProject/.lake/hopscotch
+hopscotch clean --project-dir MyProject
 
 hopscotch dep mathlib \
   --project-dir ./MyProject \
@@ -299,8 +300,22 @@ Unlike `dep`, the toolchain subcommand does not touch the lakefile or run `lake 
 
 For a step-by-step walkthrough, see [docs/toolchain-example.md](toolchain-example.md).
 
+## The `clean` subcommand
+
+```
+hopscotch clean [--project-dir DIR]
+```
+
+Deletes the `.lake/hopscotch/` state directory for the given project (default: current directory), allowing a fresh session to be started. Use this after a session has `completed` or `failed` and you want to test a different commit range or re-run from scratch.
+
+```bash
+hopscotch clean --project-dir ./MyProject
+```
+
+If the state directory does not exist, `clean` exits cleanly with a message and exit code `0`.
+
 ## Notes
 
 - `hopscotch` uses `elan run <toolchain> lake` so it always respects the downstream's pinned `lean-toolchain`, not its own.
 - Set `GITHUB_TOKEN` in your environment to increase GitHub API rate limits when fetching large commit ranges.
-- To start a new session after a completed or failed run, delete `.lake/hopscotch/` entirely.
+- To start a new session after a completed or failed run, run `hopscotch clean [--project-dir DIR]`.

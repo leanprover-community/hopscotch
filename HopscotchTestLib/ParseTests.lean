@@ -6,8 +6,10 @@ open Hopscotch.State
 namespace HopscotchTestLib.ParseTests
 
 /-- Assert that parsing the given args succeeds and return the config. -/
-private def parse (args : List String) : IO Runner.Config :=
-  CLI.parseArgs args
+private def parse (args : List String) : IO Runner.Config := do
+  match ← CLI.parseArgs args with
+  | .run config => return config
+  | .clean _ => throw <| IO.userError "expected run command, got clean"
 
 /-- Assert that parsing the given args fails. -/
 private def assertParseError (args : List String) (hint : String) : IO Unit := do
