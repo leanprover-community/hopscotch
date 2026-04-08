@@ -114,6 +114,7 @@ structure Paths where
   statePath : System.FilePath
   summaryPath : System.FilePath
   logsDir : System.FilePath
+  culpritLogsDir : System.FilePath
   deriving Repr
 
 /-- Build the standard `.lake/hopscotch` path layout for a downstream project. -/
@@ -126,6 +127,7 @@ def mkPaths (projectDir : System.FilePath) : IO Paths := do
     statePath := stateRoot / "state.json"
     summaryPath := stateRoot / "summary.md"
     logsDir := stateRoot / "logs"
+    culpritLogsDir := stateRoot / "logs" / "culprit"
   }
 
 /-- Ensure the tool-owned directory tree exists before writing state or logs. -/

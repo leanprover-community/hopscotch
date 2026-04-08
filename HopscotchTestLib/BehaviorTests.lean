@@ -97,7 +97,7 @@ private def «summary display formatting» : IO Unit := do
     "Mode: linear",
     "First failing commit: bad2",
     "Failure stage: lake build",
-    "Log file: /tmp/demo/.lake/hopscotch/logs/1-bad2-build.log",
+    "Culprit log directory: /tmp/demo/.lake/hopscotch/logs/culprit",
     ""
   ]
   -- Assert: the plain and terminal-rendered summaries preserve the expected content.
@@ -225,8 +225,8 @@ private def «bisect summary formatting» : IO Unit := do
     "final bisect summaries should name the previous known-good commit"
   assertContains "Failure stage: lake build" failedPlain
     "final bisect summaries should retain the failing stage"
-  assertContains "Log file: /tmp/demo/.lake/hopscotch/logs/0-4-bad4-build.log" failedPlain
-    "final bisect summaries should include the culprit log path"
+  assertContains "Culprit log directory: /tmp/demo/.lake/hopscotch/logs/culprit" failedPlain
+    "final bisect summaries should include the culprit log directory"
 
 /-- Scenario: `parseRepoId` handles all supported GitHub URL forms. -/
 private def «GitHub URL parsing» : IO Unit := do

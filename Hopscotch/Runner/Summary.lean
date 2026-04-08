@@ -51,7 +51,7 @@ def summaryText (state : PersistedState) : String :=
               modeLine,
               s!"First failing commit: {state.currentCommit.getD "unknown"}",
               failureStageLine state.stage,
-              s!"Log file: {state.lastLogPath.getD "unknown"}"
+              s!"Culprit log directory: {state.projectDir / ".lake" / "hopscotch" / "logs" / "culprit"}"
             ]
         | .bisect =>
             [
@@ -60,7 +60,7 @@ def summaryText (state : PersistedState) : String :=
               s!"First failing commit: {state.currentCommit.getD "unknown"}",
               s!"Previous known good commit: {bisectKnownGoodCommit state}",
               failureStageLine state.stage,
-              s!"Log file: {state.lastLogPath.getD "unknown"}"
+              s!"Culprit log directory: {state.projectDir / ".lake" / "hopscotch" / "logs" / "culprit"}"
             ]
     | .running =>
         let stageLine :=

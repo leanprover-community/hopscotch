@@ -130,6 +130,7 @@ Pass `--allow-dirty-workspace` to override this too, if you know what you are do
 - `state.json` — restartable state (committed index, current stage, bisect window, etc.)
 - `summary.md` — human-readable outcome
 - `logs/` — per-step build logs; names encode the step counter and list position (e.g. `3-abc12345-build.log` in linear mode, `1-23-abc12345-build.log` in bisect mode)
+- `logs/culprit/` — copy of the log(s) for the **culprit commit**: the first commit in the tested range that caused a build failure. This folder is created when a failure is found and removed automatically in linear mode when the culprit commit passes on the next resume (i.e. after you fix the issue). It lets you find the relevant log immediately without reading the summary.
 
 If `hopscotch` is interrupted at any point, rerunning the same command resumes from exactly where it left off without repeating completed steps.
 
@@ -206,10 +207,13 @@ Last known good: 9e0f1a2b (32/47)
 First known bad: 4f5a6b7c (33/47)
 ```
 
-Inspect the build log for the bad commit:
+The build log for the culprit commit is copied to `logs/culprit/` for easy access:
 
 ```bash
-cat MyProject/.lake/hopscotch/logs/4-32-4f5a6b7cab12-build.log
+ls MyProject/.lake/hopscotch/logs/culprit/
+# 4-32-4f5a6b7cab12-build.log
+
+cat MyProject/.lake/hopscotch/logs/culprit/4-32-4f5a6b7cab12-build.log
 # MyProject/Foo.lean:12:5: error: unknown identifier 'Mathlib.SomeRenamedLemma'
 ```
 

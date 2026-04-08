@@ -12,6 +12,20 @@ namespace Hopscotch.Runner
 open Hopscotch
 open Hopscotch.State
 
+/-- Copy the culprit log file into the designated culprit subfolder for easy discovery.
+    Skips silently if the source file does not exist (e.g. interrupted before the step ran). -/
+private def copyCulpritLog (paths : Paths) (culpritLogPath : System.FilePath) : IO Unit := do
+  if ← culpritLogPath.pathExists then
+    IO.FS.createDirAll paths.culpritLogsDir
+    let fileName := culpritLogPath.fileName.getD culpritLogPath.toString
+    IO.FS.writeFile (paths.culpritLogsDir / fileName) (← IO.FS.readFile culpritLogPath)
+
+/-- Remove the culprit subfolder when the previously-failing commit passes on resume,
+    so the folder only exists while the failure is unresolved. -/
+private def clearCulpritLogs (paths : Paths) : IO Unit := do
+  if ← paths.culpritLogsDir.pathExists then
+    IO.FS.removeDirAll paths.culpritLogsDir
+
 /-- Result of one full bump + verify probe. -/
 private inductive ProbeRunResult where
   | success
@@ -114,6 +128,7 @@ private def runAdvance (config : Config) (paths : Paths) (commits : Array String
     match ← runProbe config paths state index index commit emit with
     | .failure stage logPath =>
         let (_, summary) ← saveState paths <| buildFailureState state index commit stage logPath
+        copyCulpritLog paths logPath
         return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
     | .success =>
         if resumedFailedCommit && index == resumeIndex && !config.allowDirtyWorkspace then
@@ -128,7 +143,10 @@ private def runAdvance (config : Config) (paths : Paths) (commits : Array String
               emit .failure
                 s!"[{← nowUtcString}] Resume blocked: commit the fix for {commit} or rerun with --allow-dirty-workspace"
               let (_, summary) ← saveState paths <| buildFailureState state index commit .gitCheck buildLogPath
+              copyCulpritLog paths buildLogPath
               return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
+        if resumedFailedCommit && index == resumeIndex then
+          clearCulpritLogs paths
         let saved ← saveState paths <| advanceAfterSuccess state commits index commit
         state := saved.1
         lastSummary := saved.2
@@ -190,6 +208,7 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
             match knownBadFailureResult? bisect with
             | some failure =>
                 let (_, summary) ← saveState paths <| buildBisectResolvedState state commits bisect failure
+                if let some lp := failure.logPath then copyCulpritLog paths lp
                 return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
             | none =>
                 throw <| IO.userError "stored bisect state is missing the failing probe result"
@@ -204,6 +223,7 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
           match knownBadFailureResult? updatedBisect with
           | some failure =>
               let (_, summary) ← saveState paths <| buildBisectResolvedState state commits updatedBisect failure
+              if let some lp := failure.logPath then copyCulpritLog paths lp
               return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
           | none =>
               throw <| IO.userError "bisect resolution is missing the failing probe result"
