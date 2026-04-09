@@ -78,6 +78,7 @@ If any step fails, `hopscotch` stops, records the failure, and exits with code `
 | `--project-dir DIR` | Path to the downstream project (default: current directory). |
 | `--quiet` | Suppress lake command output. |
 | `--allow-dirty-workspace` | Skip git-cleanliness checks (both the linear-mode resume check and the bisect session-start check). |
+| `--keep-last-good` | After the search completes, leave the lakefile pinned to the last *passing* commit instead of the first *failing* one (see [End-state behavior](#end-state-behavior) below). |
 | `--config-file PATH` | Load options from a JSON config file. CLI flags take precedence. |
 
 `--from` or `--git-url` can be passed without `--to`; in that case `--to` defaults to the tip of the default branch.
@@ -96,6 +97,14 @@ Options can be stored in a JSON file and passed with `--config-file`:
 ```
 
 CLI flags override config file values.
+
+### End-state behavior
+
+When `hopscotch` finds a failure boundary, it leaves the downstream's lakefile (and `lean-toolchain` for the `toolchain` subcommand) pinned to the **first failing commit**, regardless of whether `linear` or `bisect` mode was used. The rationale: you almost always want to reproduce the failure immediately — run `lake build` as soon as `hopscotch` exits and you are looking at the exact error.
+
+Bisect mode requires this explicit restore step because it jumps around during the binary search and the last probe it runs is not necessarily the culprit commit. Linear mode finishes naturally at the failing commit, but also applies the restore for consistency.
+
+Pass `--keep-last-good` to pin to the **last passing commit** instead — useful when you want the project in a buildable state after the search (for example, to run the test suite or inspect the working build before tackling the fix). If the very first commit in the range fails, there is no known-good commit to restore to, so `--keep-last-good` has no effect in that case.
 
 ### Git check and `--allow-dirty-workspace`
 
@@ -291,6 +300,7 @@ Unlike `dep`, the toolchain subcommand does not touch the lakefile or run `lake 
 | `--project-dir DIR` | Path to the downstream project (default: current directory). |
 | `--quiet` | Suppress lake command output. |
 | `--allow-dirty-workspace` | Skip git-cleanliness checks (same semantics as for `dep`). |
+| `--keep-last-good` | After the search completes, leave `lean-toolchain` pinned to the last *passing* toolchain instead of the first *failing* one (same semantics as for `dep`). |
 | `--config-file PATH` | Load options from a JSON config file. CLI flags take precedence. |
 
 ### Config file

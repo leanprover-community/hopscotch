@@ -53,6 +53,11 @@ structure Config where
   runMode : RunMode := .linear
   quiet : Bool := false
   allowDirtyWorkspace : Bool := false
+  /-- When true, restore the lakefile/toolchain to the last *passing* commit
+      after the search completes, rather than the first *failing* one.
+      Has no effect when no commit passed (i.e. the very first commit failed),
+      because there is no known-good commit to restore to. -/
+  keepLastGood : Bool := false
   strategy : RunStrategy
 
 /-- Final outcome returned to the CLI after a run or resume attempt. -/

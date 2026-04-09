@@ -271,9 +271,10 @@ private def «bisect probes expected commits» : IO Unit := do
 
     let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
     assertEq
-      ["update:badbuild6", "build:badbuild6", "update:good3", "build:good3", "update:badbuild4", "build:badbuild4"]
+      ["update:badbuild6", "build:badbuild6", "update:good3", "build:good3", "update:badbuild4", "build:badbuild4",
+       "update:badbuild4"]
       calls
-      "bisect should probe only the endpoint and required midpoints"
+      "bisect should probe only the endpoint and required midpoints, then restore the culprit commit"
 
     let summary := (← IO.FS.readFile result.summaryPath)
     assertContains "First failing commit: badbuild4" summary
@@ -310,10 +311,11 @@ private def «bisect resets toolchain between probes» : IO Unit := do
         "update:good4:leanprover/lean4:v4.28.0",
         "build:good4:leanprover/lean4:v4.28.0",
         "update:badbuild5:leanprover/lean4:v4.28.0",
-        "build:badbuild5:leanprover/lean4:v4.28.0"
+        "build:badbuild5:leanprover/lean4:v4.28.0",
+        "update:badbuild5:leanprover/lean4:v4.28.0"
       ]
       toolchainCalls
-      "bisect should restore the original toolchain before every fresh probe while preserving intra-probe updates"
+      "bisect should restore the original toolchain before every fresh probe while preserving intra-probe updates, then restore the culprit commit"
 
 /-- Scenario: bisect treats bump failures as bad probe results. -/
 private def «bisect treats update failures as bad» : IO Unit := do
@@ -340,8 +342,8 @@ private def «bisect treats update failures as bad» : IO Unit := do
       "bump failures should be attributed to the bump stage"
 
     let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
-    assertEq ["update:badupdate4", "update:good2", "build:good2", "update:badupdate3"] calls
-      "build should not run after a bump failure"
+    assertEq ["update:badupdate4", "update:good2", "build:good2", "update:badupdate3", "update:badupdate3"] calls
+      "build should not run after a bump failure; restore attempt runs after search completes"
 
 /-- Scenario: interrupted bisect probes resume at the same commit and reuse cached results. -/
 private def «bisect resumes interrupted midpoint probe» : IO Unit := do
@@ -384,8 +386,8 @@ private def «bisect resumes interrupted midpoint probe» : IO Unit := do
 
     assertEq 1 result.exitCode "resumed bisect runs should still resolve the culprit"
     let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
-    assertEq ["build:good2", "update:good3", "build:good3"] calls
-      "resumed bisect runs should reuse cached probes and restart the interrupted midpoint at the saved stage"
+    assertEq ["build:good2", "update:good3", "build:good3", "update:badbuild4"] calls
+      "resumed bisect runs should reuse cached probes and restart the interrupted midpoint at the saved stage, then restore the culprit commit"
 
 /-- Scenario: bisect aborts if the supplied bad endpoint no longer fails on re-verification. -/
 private def «bisect rejects successful bad endpoint» : IO Unit := do
@@ -641,6 +643,75 @@ private def «quiet := false does not suppress runner progress messages» : IO U
     assertTrue (calls.contains "build:good1")
       "the build should run regardless of quiet setting"
 
+/-- Scenario: bisect default end-state leaves the lakefile pinned to the first bad commit. -/
+private def «bisect default end state pins first bad commit» : IO Unit := do
+  withTempDir "hopscotch-bisect-end-bad" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath
+      "good0\ngood1\ngood2\ngood3\nbadbuild4\nbadbuild5\nbadbuild6\n"
+    configureMockLake projectDir "fail-build"
+
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+      runMode := .bisect
+      quiet := true
+    } ignoreOutput
+
+    assertEq 1 result.exitCode "bisect should report failure"
+    let lakefile := (← IO.FS.readFile (projectDir / "lakefile.toml"))
+    assertTrue (lakefile.contains "rev = \"badbuild4\"")
+      "bisect default end state should leave the lakefile pinned to the first bad commit"
+
+/-- Scenario: bisect with --keep-last-good leaves the lakefile pinned to the last good commit. -/
+private def «bisect keep last good pins last good commit» : IO Unit := do
+  withTempDir "hopscotch-bisect-end-good" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath
+      "good0\ngood1\ngood2\ngood3\nbadbuild4\nbadbuild5\nbadbuild6\n"
+    configureMockLake projectDir "fail-build"
+
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+      runMode := .bisect
+      quiet := true
+      keepLastGood := true
+    } ignoreOutput
+
+    assertEq 1 result.exitCode "bisect should report failure"
+    let lakefile := (← IO.FS.readFile (projectDir / "lakefile.toml"))
+    assertTrue (lakefile.contains "rev = \"good3\"")
+      "bisect with --keep-last-good should leave the lakefile pinned to the last good commit"
+
+/-- Scenario: linear with --keep-last-good leaves the lakefile pinned to the last good commit. -/
+private def «linear keep last good pins last good commit» : IO Unit := do
+  withTempDir "hopscotch-linear-end-good" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\nbadbuild\ngood2\n"
+    configureMockLake projectDir "fail-build"
+
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+      quiet := true
+      keepLastGood := true
+    } ignoreOutput
+
+    assertEq 1 result.exitCode "linear should report failure"
+    let lakefile := (← IO.FS.readFile (projectDir / "lakefile.toml"))
+    assertTrue (lakefile.contains "rev = \"good1\"")
+      "linear with --keep-last-good should leave the lakefile pinned to the last good commit"
+
 def suite : TestSuite := #[
   test_case «downstream toolchain command resolution»,
   test_case «stop at first build failure»,
@@ -662,7 +733,10 @@ def suite : TestSuite := #[
   test_case «missing lakefile is rejected with a clear error»,
   test_case «resume with stale schema version is rejected»,
   test_case «range mode rejects a non-GitHub git URL»,
-  test_case «quiet := false does not suppress runner progress messages»
+  test_case «quiet := false does not suppress runner progress messages»,
+  test_case «bisect default end state pins first bad commit»,
+  test_case «bisect keep last good pins last good commit»,
+  test_case «linear keep last good pins last good commit»
 ]
 
 end HopscotchTestLib.IOTests

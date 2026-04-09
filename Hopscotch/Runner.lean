@@ -26,6 +26,25 @@ private def clearCulpritLogs (paths : Paths) : IO Unit := do
   if ← paths.culpritLogsDir.pathExists then
     IO.FS.removeDirAll paths.culpritLogsDir
 
+/-- After the search completes, apply `mkBump` so the local lakefile/toolchain
+    reflects the desired endpoint.  Failure is non-fatal: the search result is
+    already saved; we just emit a warning.
+
+    Note: the log is written to a fixed path `restore.log` rather than a
+    numbered probe log.  This is fine because `restoreTo` is called at most once
+    per session, immediately before `run` returns.  If the tool is ever extended
+    to perform multiple restorations in one session (e.g. multi-boundary
+    detection), each call would overwrite the previous restore log; use a
+    timestamped or indexed path instead. -/
+private def restoreTo (config : Config) (paths : Paths) (commit : String)
+    (emit : ConsoleStyle → String → IO Unit) : IO Unit := do
+  let bumpStep := config.strategy.mkBump commit
+  -- Fixed log path: safe because restoreTo is called at most once per run (see note above).
+  let logPath := paths.logsDir / "restore.log"
+  let ok ← bumpStep.run paths.projectDir logPath config.quiet
+  unless ok do
+    emit .running s!"[{← nowUtcString}] Warning: could not restore to {commit} (see {logPath})"
+
 /-- Result of one full bump + verify probe. -/
 private inductive ProbeRunResult where
   | success
@@ -350,8 +369,36 @@ def run (config : Config) (output : String → IO Unit := IO.println)
   ensureLakefile paths
   ensureDirs paths
 
-  match config.runMode with
-  | .linear => runAdvance config paths commits emit
-  | .bisect => runBisect config paths commits emit
+  let result ← match config.runMode with
+    | .linear => runAdvance config paths commits emit
+    | .bisect => runBisect config paths commits emit
+  -- Post-search lakefile/toolchain restoration.
+  -- Restore the lakefile/toolchain to a well-defined endpoint once the search
+  -- is done so that the caller can immediately reproduce the result with
+  -- `lake build`.
+  --
+  -- The condition `config.runMode == .bisect || config.keepLastGood` is a
+  -- deliberate no-op for the linear+default case: `runAdvance` stops as soon
+  -- as the failing probe returns and does *not* modify the lakefile afterward,
+  -- so it is already pinned to the first bad commit.  If `runAdvance` is ever
+  -- changed to touch the lakefile after a failure, this assumption breaks and
+  -- an explicit restore call must be added here for that case too.
+  --
+  -- `currentCommit` is set to the first bad commit by both `buildFailureState`
+  -- (linear) and `buildBisectResolvedState` (bisect), so it is always the
+  -- correct target for the default end-state.
+  --
+  -- `lastSuccessfulCommit` is `none` when the very first commit in the range
+  -- fails (no good commit was ever observed).  In that case `--keep-last-good`
+  -- has no commit to restore to and silently does nothing — the lakefile stays
+  -- wherever the failed probe left it.
+  if result.exitCode == 1 && (config.runMode == .bisect || config.keepLastGood) then
+    if let some savedState ← State.load? paths then
+      let targetCommit := if config.keepLastGood
+        then savedState.lastSuccessfulCommit   -- none if first commit failed; skipped below
+        else savedState.currentCommit          -- always the first bad commit
+      if let some c := targetCommit then
+        restoreTo config paths c emit
+  return result
 
 end Hopscotch.Runner
