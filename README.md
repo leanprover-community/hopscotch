@@ -153,30 +153,31 @@ hopscotch clean --project-dir MyProject
 
 Suppose you maintain `MyProject`, a Lean 4 project that depends on mathlib. mathlib has released a batch of new commits and you want to find the exact commit where your project breaks. Because mathlib moves fast — dozens of commits a day — you almost always want bisect: it identifies the first bad commit with roughly log₂(N) probes instead of N.
 
-### 1. Check your downstream's current pin
+### 1. Navigate to your project
 
-Your lakefile can be either `lakefile.toml` or `lakefile.lean`; `hopscotch` handles both.
+```bash
+cd MyProject
+```
+
+Your lakefile can be either `lakefile.toml` or `lakefile.lean`; `hopscotch` handles both. The currently-pinned rev is what `--from` will default to:
 
 ```
-$ cat MyProject/lakefile.toml | grep -A3 mathlib
+$ cat lakefile.toml | grep -A3 mathlib
 [[require]]
 name = "mathlib"
 git = "https://github.com/leanprover-community/mathlib4"
-rev = "a1b2c3d4"   # currently pinned here
+rev = "a1b2c3d4"   # hopscotch will use this as --from by default
 ```
 
 ### 2. Run bisect to find the breaking commit
 
-Bisect is the default — no `--scan-mode` flag needed:
+Bisect is the default — no `--scan-mode` flag needed. `--from` defaults to the rev in `lake-manifest.json` (falling back to the lakefile's `rev` field), so you can omit it:
 
 ```bash
-hopscotch dep mathlib \
-  --project-dir ./MyProject \
-  --from a1b2c3d4 \
-  --to origin/master
+hopscotch dep mathlib --to v4.29.0
 ```
 
-`hopscotch` fetches the commit range from GitHub (set `GITHUB_TOKEN` to avoid rate limits), validates that the last commit in the range actually fails, then binary-searches. Note that `--from` is exclusive — `a1b2c3d4` itself is not tested.
+`hopscotch` fetches the commit range from GitHub (set `GITHUB_TOKEN` to avoid rate limits), validates that the last commit in the range actually fails, then binary-searches.
 
 ```
 [2026-03-31T12:00:00Z] Validating last commit e5f6a7b8 (47/47) — must fail to proceed
@@ -210,7 +211,7 @@ Six probes instead of 47.
 The summary records the exact boundary:
 
 ```bash
-cat MyProject/.lake/hopscotch/summary.md
+cat .lake/hopscotch/summary.md
 # Bisect result
 Last known good: 9e0f1a2b (32/47)
 First known bad: 4f5a6b7c (33/47)
@@ -219,19 +220,19 @@ First known bad: 4f5a6b7c (33/47)
 The build log for the culprit commit is copied to `logs/culprit/` for easy access:
 
 ```bash
-ls MyProject/.lake/hopscotch/logs/culprit/
+ls .lake/hopscotch/logs/culprit/
 # 4-32-4f5a6b7cab12-build.log
 
-cat MyProject/.lake/hopscotch/logs/culprit/4-32-4f5a6b7cab12-build.log
-# MyProject/Foo.lean:12:5: error: unknown identifier 'Mathlib.SomeRenamedLemma'
+cat .lake/hopscotch/logs/culprit/4-32-4f5a6b7cab12-build.log
+# Foo.lean:12:5: error: unknown identifier 'Mathlib.SomeRenamedLemma'
 ```
 
 ### 4. Fix the issue in your project
 
-Edit `MyProject/Foo.lean` to use the updated API. With the lakefile still pinned to `4f5a6b7c` from the last probe, verify the fix locally:
+Edit `Foo.lean` to use the updated API. With the lakefile still pinned to `4f5a6b7c` from the last probe, verify the fix locally:
 
 ```bash
-cd MyProject && lake build
+lake build
 ```
 
 ### 5. Commit and start a fresh session
@@ -239,13 +240,10 @@ cd MyProject && lake build
 Bisect's goal is identification, not incremental repair — once it finds the boundary the session is complete. Commit your fix, clear the state, and run again to check whether the rest of the range is clean:
 
 ```bash
-cd MyProject && git add -p && git commit -m "fix: update to renamed Mathlib.SomeRenamedLemma"
-hopscotch clean --project-dir MyProject
+git add -p && git commit -m "fix: update to renamed Mathlib.SomeRenamedLemma"
+hopscotch clean
 
-hopscotch dep mathlib \
-  --project-dir ./MyProject \
-  --from a1b2c3d4 \
-  --to origin/master
+hopscotch dep mathlib --to v4.29.0
 ```
 
 If there is only one regression in the range this second run will complete with all commits passing. If there are multiple regressions, bisect will find the next boundary and you repeat.
@@ -254,15 +252,11 @@ If there is only one regression in the range this second run will complete with 
 
 `--scan-mode linear` steps through commits oldest-to-newest and stops at the first failure. It is useful when:
 
-- you are testing a single commit (`--from <last-good> --to <candidate>`)
+- you are testing a single commit (`--to <candidate>`, letting `--from` default to the current pin)
 - you prefer to fix each regression before moving to the next, letting you accumulate fixes across a long walk
 
 ```bash
-hopscotch dep mathlib \
-  --project-dir ./MyProject \
-  --from a1b2c3d4 \
-  --to origin/master \
-  --scan-mode linear
+hopscotch dep mathlib --to v4.29.0 --scan-mode linear
 ```
 
 Because linear mode serializes state after each step, rerunning the same command after a failure resumes from exactly where it stopped. Once the previously-failing commit passes, `hopscotch` checks that the working tree is clean before advancing — ensuring every fix is committed before the session moves on. Pass `--allow-dirty-workspace` to skip this check when you are iterating on a fix across several commits before committing.
@@ -273,9 +267,7 @@ If you already have a specific list of commits to test (e.g. from a CI artifact 
 
 ```bash
 echo -e "abc123\ndef456\nghi789" > commits.txt
-hopscotch dep mathlib \
-  --project-dir ./MyProject \
-  --commits-file commits.txt
+hopscotch dep mathlib --commits-file commits.txt
 ```
 
 ## The `toolchain` subcommand in detail
