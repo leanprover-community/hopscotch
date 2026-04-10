@@ -304,7 +304,7 @@ Unlike `dep`, the toolchain subcommand does not touch the lakefile or run `lake 
 }
 ```
 
-For a step-by-step walkthrough, see [docs/toolchain-example.md](toolchain-example.md).
+For a step-by-step walkthrough, see [docs/toolchain-example.md](docs/toolchain-example.md).
 
 ## The `clean` subcommand
 
