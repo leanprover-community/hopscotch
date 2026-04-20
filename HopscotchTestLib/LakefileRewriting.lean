@@ -17,7 +17,7 @@ private def «lakefile dependency rev rewriting basic test» : IO Unit := do
     "[[require]]",
     "name = \"mathlib\"",
     "git = \"https://github.com/leanprover-community/mathlib4.git\"",
-    "rev = \"old\" # keep this comment",
+    "rev = \"old\" -- keep this comment",
     "",
     "[[require]]",
     "name = \"batteries\"",
@@ -32,7 +32,55 @@ private def «lakefile dependency rev rewriting basic test» : IO Unit := do
     "[[require]]",
     "name = \"mathlib\"",
     "git = \"https://github.com/leanprover-community/mathlib4.git\"",
-    "rev = \"new\" # keep this comment",
+    "rev = \"new\" -- keep this comment",
+    "",
+    "[[require]]",
+    "name = \"batteries\"",
+    "git = \"https://github.com/leanprover-community/batteries.git\"",
+    "rev = \"abc123\"",
+    ""
+  ]
+
+  -- Act: rewrite the target dependency rev in the prepared lakefile.
+  let rewritten ← IO.ofExcept <| LakefileProcessor.rewriteContents base "mathlib" "new"
+  -- Assert: the rewritten lakefile changes only the requested dependency rev.
+  assertEq expectedRewrite rewritten
+    "rewrite should update only the requested dependency rev, preserving formatting and comments"
+
+private def «lakefile dependency rev rewriting comments» : IO Unit := do
+  -- Prepare: a lakefile with two dependency blocks and one target rev to rewrite.
+  let base := makeMultiline [
+    "name = \"demo\"",
+    "",
+    "-- keep this comment",
+    "[[require]]",
+    "name = \"mathlib\"",
+    "   /-- keep this",
+    " multiline ",
+    "comment --/",
+    "git = \"https://github.com/leanprover-community/mathlib4.git\"",
+    "-- keep this comment",
+    "rev = \"old\"",
+    "",
+    "[[require]]",
+    "name = \"batteries\"",
+    "git = \"https://github.com/leanprover-community/batteries.git\"",
+    "rev = \"abc123\"",
+    ""
+  ]
+
+  let expectedRewrite := makeMultiline [
+    "name = \"demo\"",
+    "",
+    "-- keep this comment",
+    "[[require]]",
+    "name = \"mathlib\"",
+    "   /-- keep this",
+    " multiline ",
+    "comment --/",
+    "git = \"https://github.com/leanprover-community/mathlib4.git\"",
+    "-- keep this comment",
+    "rev = \"new\"",
     "",
     "[[require]]",
     "name = \"batteries\"",
@@ -56,7 +104,7 @@ private def «lakefile dependency rev rewriting basic test with lean_lib multibl
     "[[require]]",
     "name = \"mathlib\"",
     "git = \"https://github.com/leanprover-community/mathlib4.git\"",
-    "rev = \"old\" # keep this comment",
+    "rev = \"old\" -- keep this comment",
     "",
     "[[lean_lib]]",
     "name = \"batteries\"",
@@ -70,7 +118,7 @@ private def «lakefile dependency rev rewriting basic test with lean_lib multibl
     "[[require]]",
     "name = \"mathlib\"",
     "git = \"https://github.com/leanprover-community/mathlib4.git\"",
-    "rev = \"new\" # keep this comment",
+    "rev = \"new\" -- keep this comment",
     "",
     "[[lean_lib]]",
     "name = \"batteries\"",
@@ -323,6 +371,7 @@ private def «lakefile dependency failed rev rewriting» : IO Unit := do
 
 def suite : TestSuite := #[
   test_case «lakefile dependency rev rewriting basic test»,
+  test_case «lakefile dependency rev rewriting comments»,
   test_case «lakefile dependency rev rewriting basic test with lean_lib multiblock»,
   test_case «lakefile dependency rev rewriting basic test with missing rev lean_lib multiblock»,
   test_case «lakefile dependency rev rewriting: missing rev»,

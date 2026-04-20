@@ -60,6 +60,7 @@ private def readPinnedRev (projectDir : System.FilePath) : IO String := do
 --   "fail-build-and-mutate-toolchain"  — update rewrites lean-toolchain for revs prefixed "mutatetoolchain",
 --                                        then build fails for revs prefixed "badbuild"
 --   "fail-build-toolchain"             — build fails when lean-toolchain starts with "badbuild"
+--   "fail-cache"                       — `cache get` fails for revs prefixed "badcache"
 
 /-- Execute the mock `lake` helper executable used by the IO-heavy tests. -/
 def runMockLake (args : List String) : IO UInt32 := do
@@ -68,7 +69,8 @@ def runMockLake (args : List String) : IO UInt32 := do
     match args with
     | [stage] => pure (stage, none)
     | ["update", dependencyName] => pure ("update", some dependencyName)
-    | _ => fail s!"mock lake expected `build` or `update [dependency]`, got: {args}"
+    | ["cache", "get"] => pure ("cache", none)
+    | _ => fail s!"mock lake expected `build`, `update [dependency]`, or `cache get`, got: {args}"
   let mode := (← IO.FS.readFile (mockLakeModePath projectDir)).trimAscii.copy
   let rev ← readPinnedRev projectDir
   let toolchain := (← IO.FS.readFile (projectDir / "lean-toolchain")).trimAscii.copy
@@ -90,6 +92,8 @@ def runMockLake (args : List String) : IO UInt32 := do
   else if mode == "fail-update" && stage == "update" && rev.startsWith "badupdate" then
     pure 1
   else if mode == "fail-build-toolchain" && stage == "build" && toolchain.startsWith "badbuild" then
+    pure 1
+  else if mode == "fail-cache" && stage == "cache" && rev.startsWith "badcache" then
     pure 1
   else
     pure 0

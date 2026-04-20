@@ -13,19 +13,20 @@ def depUsage : String :=
   "usage: hopscotch dep <dependency-name> " ++
   "[--commits-file PATH | --to REF [--from REF]] " ++
   "[--git-url URL] [--project-dir DIR] [--quiet] [--allow-dirty-workspace] " ++
-  "[--keep-last-good] [--scan-mode [linear|bisect]] [--config-file PATH]"
+  "[--keep-last-good] [--cache] [--scan-mode [linear|bisect]] [--config-file PATH]"
 
 /-- Shared usage text for `hopscotch toolchain`. -/
 def toolchainUsage : String :=
   "usage: hopscotch toolchain --toolchains-file PATH " ++
   "[--project-dir DIR] [--quiet] [--allow-dirty-workspace] " ++
-  "[--keep-last-good] [--scan-mode [linear|bisect]] [--config-file PATH]"
+  "[--keep-last-good] [--cache] [--scan-mode [linear|bisect]] [--config-file PATH]"
 
 /-- Config file options for the `dep` subcommand. All fields are optional;
     explicit CLI flags take precedence over values set here. -/
 private structure DepConfigFile where
   allowDirtyWorkspace : Option Bool := none
   keepLastGood : Option Bool := none
+  cache : Option Bool := none
   projectDir : Option String := none
   gitUrl : Option String := none
   fromRef : Option String := none
@@ -36,6 +37,7 @@ private structure DepConfigFile where
 private structure ToolchainConfigFile where
   projectDir : Option String := none
   toolchainsFile : Option String := none
+  cache : Option Bool := none
   deriving FromJson, Inhabited
 
 /-- Load and parse a JSON config file, returning a default value when no file is given. -/
@@ -61,6 +63,7 @@ private structure DepParseState where
   quiet : Bool := false
   allowDirtyWorkspace : Option Bool := none
   keepLastGood : Option Bool := none
+  cache : Option Bool := none
 
 private def parseDepOptions (state : DepParseState) (args : List String) : IO DepParseState := do
   match args with
@@ -84,6 +87,8 @@ private def parseDepOptions (state : DepParseState) (args : List String) : IO De
       parseDepOptions { state with allowDirtyWorkspace := some true } rest
   | "--keep-last-good" :: rest =>
       parseDepOptions { state with keepLastGood := some true } rest
+  | "--cache" :: rest =>
+      parseDepOptions { state with cache := some true } rest
   | "--scan-mode" :: "bisect" :: rest =>
       parseDepOptions { state with runMode := .bisect } rest
   | "--scan-mode" :: "linear" :: rest =>
@@ -95,6 +100,7 @@ private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
   let cfg : DepConfigFile ← loadConfigFile state.configFile
   let allowDirtyWorkspace := (state.allowDirtyWorkspace <|> cfg.allowDirtyWorkspace).getD false
   let keepLastGood := (state.keepLastGood <|> cfg.keepLastGood).getD false
+  let cache := (state.cache <|> cfg.cache).getD false
   let projectDir := (state.projectDir <|> cfg.projectDir.map System.FilePath.mk).getD "."
   let fromRef := state.fromRef <|> cfg.fromRef
   let gitUrl := state.gitUrl <|> cfg.gitUrl
@@ -124,7 +130,8 @@ private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
     quiet := state.quiet
     allowDirtyWorkspace := allowDirtyWorkspace
     keepLastGood := keepLastGood
-    strategy := Runner.lakefileStrategy state.dependencyName "lake"
+    cache := cache
+    strategy := Runner.lakefileStrategy state.dependencyName "lake" cache
   }
 
 private def parseDep (args : List String) : IO Runner.Config := do
@@ -146,6 +153,7 @@ private structure ToolchainParseState where
   quiet : Bool := false
   allowDirtyWorkspace : Bool := false
   keepLastGood : Bool := false
+  cache : Option Bool := none
   configFile : Option System.FilePath := none
 
 private def parseToolchainOptions (state : ToolchainParseState)
@@ -165,6 +173,8 @@ private def parseToolchainOptions (state : ToolchainParseState)
       parseToolchainOptions { state with allowDirtyWorkspace := true } rest
   | "--keep-last-good" :: rest =>
       parseToolchainOptions { state with keepLastGood := true } rest
+  | "--cache" :: rest =>
+      parseToolchainOptions { state with cache := some true } rest
   | "--scan-mode" :: "bisect" :: rest =>
       parseToolchainOptions { state with runMode := .bisect } rest
   | "--scan-mode" :: "linear" :: rest =>
@@ -175,6 +185,7 @@ private def parseToolchainOptions (state : ToolchainParseState)
 private def buildToolchainConfig (state : ToolchainParseState) : IO Runner.Config := do
   let cfg : ToolchainConfigFile ← loadConfigFile state.configFile
   let projectDir := (state.projectDir <|> cfg.projectDir.map System.FilePath.mk).getD "."
+  let cache := (state.cache <|> cfg.cache).getD false
   let toolchainsFile ←
     match state.toolchainsFile <|> cfg.toolchainsFile.map System.FilePath.mk with
     | some path => pure path
@@ -186,7 +197,8 @@ private def buildToolchainConfig (state : ToolchainParseState) : IO Runner.Confi
     quiet := state.quiet
     allowDirtyWorkspace := state.allowDirtyWorkspace
     keepLastGood := state.keepLastGood
-    strategy := Runner.toolchainStrategy "lake"
+    cache := cache
+    strategy := Runner.toolchainStrategy "lake" cache
   }
 
 private def parseToolchain (args : List String) : IO Runner.Config := do
