@@ -131,6 +131,30 @@ private def «summary git check formatting» : IO Unit := do
   assertContains "Failure stage: git cleanliness check" plain
     "git-cleanliness failures should render a dedicated summary label"
 
+/-- Scenario: the cache failure stage renders a dedicated summary label. -/
+private def «summary cache stage formatting» : IO Unit := do
+  let state : PersistedState := {
+    schemaVersion := currentSchemaVersion
+    projectDir := "/tmp/demo"
+    strategyName := "mathlib"
+    items := #["good1", "badcache"]
+    runMode := .linear
+    nextIndex := 1
+    currentCommit := some "badcache"
+    lastSuccessfulCommit := some "good1"
+    status := .running
+    stage := some RunStage.cacheGet
+    lastLogPath := none
+    updatedAt := "2026-04-20T00:00:00Z"
+  }
+  let plain := Runner.summaryText state
+  assertContains "Stage: lake cache get" plain
+    "running-stage label should name the cache step"
+  let failedState : PersistedState := { state with status := .failed }
+  let failedPlain := Runner.summaryText failedState
+  assertContains "Failure stage: lake cache get" failedPlain
+    "failure-stage label should name the cache step"
+
 /-- Scenario: bisect midpoint selection and bound updates resolve the monotonic boundary. -/
 private def «bisect monotonic boundary resolution» : IO Unit := do
   let culprit := resolveBisectBoundary #[
@@ -322,6 +346,7 @@ def suite : TestSuite := #[
   test_case «console color helper behavior»,
   test_case «summary display formatting»,
   test_case «summary git check formatting»,
+  test_case «summary cache stage formatting»,
   test_case «bisect monotonic boundary resolution»,
   test_case «bisect reset on success»,
   test_case «bisect mixed midpoint order»,

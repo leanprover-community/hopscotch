@@ -62,6 +62,32 @@ private def «dep allow dirty workspace» : IO Unit := do
   let config ← parse ["dep", "mathlib", "--from", "abc", "--to", "def", "--allow-dirty-workspace"]
   assertEq true config.allowDirtyWorkspace "should allow dirty workspace"
 
+/-- Scenario: `dep` with `--cache` enables the cache step. -/
+private def «dep cache flag» : IO Unit := do
+  let config ← parse ["dep", "mathlib", "--from", "abc", "--to", "def", "--cache"]
+  assertEq true config.cache "should enable cache"
+
+/-- Scenario: `dep` without `--cache` leaves the flag off by default. -/
+private def «dep cache flag off by default» : IO Unit := do
+  let config ← parse ["dep", "mathlib", "--from", "abc", "--to", "def"]
+  assertEq false config.cache "cache should be off by default"
+
+/-- Scenario: `dep` reads `cache` from a config file. -/
+private def «dep cache from config file» : IO Unit := do
+  withTempDir "parse-tests-dep-cache-cfg" fun dir => do
+    let cfgPath := dir / "config.json"
+    IO.FS.writeFile cfgPath "{\"cache\": true}"
+    let config ← parse ["dep", "mathlib", "--to", "abc", "--config-file", cfgPath.toString]
+    assertEq true config.cache "cache should be read from config file"
+
+/-- Scenario: `--cache` on the CLI overrides `cache: false` in the config file. -/
+private def «dep cache cli overrides config file» : IO Unit := do
+  withTempDir "parse-tests-dep-cache-override" fun dir => do
+    let cfgPath := dir / "config.json"
+    IO.FS.writeFile cfgPath "{\"cache\": false}"
+    let config ← parse ["dep", "mathlib", "--to", "abc", "--config-file", cfgPath.toString, "--cache"]
+    assertEq true config.cache "CLI --cache should override config file cache=false"
+
 /-- Scenario: `dep` with `--project-dir` sets project directory. -/
 private def «dep project dir» : IO Unit := do
   let config ← parse ["dep", "mathlib", "--from", "abc", "--to", "def", "--project-dir", "/my/proj"]
@@ -180,6 +206,16 @@ private def «toolchain allow dirty workspace» : IO Unit := do
   let config ← parse ["toolchain", "--toolchains-file", "/p/toolchains.txt", "--allow-dirty-workspace"]
   assertEq true config.allowDirtyWorkspace "should allow dirty workspace"
 
+/-- Scenario: `toolchain` with `--cache` enables the cache step. -/
+private def «toolchain cache flag» : IO Unit := do
+  let config ← parse ["toolchain", "--toolchains-file", "/p/toolchains.txt", "--cache"]
+  assertEq true config.cache "toolchain --cache should enable cache"
+
+/-- Scenario: `toolchain` without `--cache` leaves the flag off by default. -/
+private def «toolchain cache flag off by default» : IO Unit := do
+  let config ← parse ["toolchain", "--toolchains-file", "/p/toolchains.txt"]
+  assertEq false config.cache "toolchain cache should be off by default"
+
 /-- Scenario: `toolchain` with `--project-dir` sets project directory. -/
 private def «toolchain project dir» : IO Unit := do
   let config ← parse ["toolchain", "--toolchains-file", "/p/f", "--project-dir", "/my/proj"]
@@ -237,6 +273,10 @@ def suite : TestSuite := #[
   test_case «dep scan mode linear»,
   test_case «dep quiet flag»,
   test_case «dep allow dirty workspace»,
+  test_case «dep cache flag»,
+  test_case «dep cache flag off by default»,
+  test_case «dep cache from config file»,
+  test_case «dep cache cli overrides config file»,
   test_case «dep project dir»,
   test_case «dep from only»,
   test_case «dep git url only»,
@@ -254,6 +294,8 @@ def suite : TestSuite := #[
   test_case «toolchain scan mode linear»,
   test_case «toolchain quiet flag»,
   test_case «toolchain allow dirty workspace»,
+  test_case «toolchain cache flag»,
+  test_case «toolchain cache flag off by default»,
   test_case «toolchain project dir»,
   test_case «toolchain config file»,
   test_case «toolchain no file»,

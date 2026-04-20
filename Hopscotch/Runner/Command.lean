@@ -83,8 +83,8 @@ configured remote before the build step. A non-zero exit is logged as a warning
 and the step still reports success, so a missing/broken cache never marks the
 commit as the culprit — the build still runs from source.
 -/
-private def cacheStep (lakeCommand : String) : ProbeStep := {
-  stage := .cache
+private def cacheGet (lakeCommand : String) : ProbeStep := {
+  stage := .cacheGet
   label := "lake cache get"
   run := fun projectDir logPath quiet => do
     let result ← runCommand lakeCommand projectDir logPath #["cache", "get"] quiet
@@ -98,7 +98,7 @@ private def cacheStep (lakeCommand : String) : ProbeStep := {
 /-- Prepend the cache step to the verify array when `cache` is true. -/
 private def withCacheStep (cache : Bool) (lakeCommand : String)
     (verify : Array ProbeStep) : Array ProbeStep :=
-  if cache then #[cacheStep lakeCommand] ++ verify else verify
+  if cache then #[cacheGet lakeCommand] ++ verify else verify
 
 /--
 Build the default lakefile-based run strategy.

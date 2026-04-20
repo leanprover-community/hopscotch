@@ -643,6 +643,110 @@ private def «quiet := false does not suppress runner progress messages» : IO U
     assertTrue (calls.contains "build:good1")
       "the build should run regardless of quiet setting"
 
+/-- Scenario: when --cache is enabled, `lake cache get` runs before each `lake build`
+    and both log files are created under the expected names. -/
+private def «cache enabled creates cache log and build log» : IO Unit := do
+  withTempDir "hopscotch-cache-enabled" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "abc123\n"
+    configureMockLake projectDir "success"
+    let lakeCmd ← mockLakeCommand
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" lakeCmd true
+      cache := true
+      quiet := true
+    } ignoreOutput
+    assertEq 0 result.exitCode "cache-enabled run should succeed"
+    let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
+    assertEq ["update:abc123", "cache:abc123", "build:abc123"] calls
+      "calls should show update → cache → build in order"
+    let logsDir := projectDir / ".lake" / "hopscotch" / "logs"
+    let cacheLog := logsDir / "0-abc123-cache.log"
+    assertTrue (← cacheLog.pathExists)
+      "a cache log file should be created for the cache step"
+    let buildLog := logsDir / "0-abc123-build.log"
+    assertTrue (← buildLog.pathExists)
+      "a build log file should be created for the build step"
+
+/-- Scenario: when `lake cache get` fails, a warning is written to the cache log but the
+    probe continues and the build still runs. The commit is not marked as the culprit. -/
+private def «cache failure warns and build still runs» : IO Unit := do
+  withTempDir "hopscotch-cache-fail" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "badcache1\n"
+    configureMockLake projectDir "fail-cache"
+    let lakeCmd ← mockLakeCommand
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" lakeCmd true
+      cache := true
+      quiet := true
+    } ignoreOutput
+    assertEq 0 result.exitCode "a cache failure should not fail the probe"
+    let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
+    assertEq ["update:badcache1", "cache:badcache1", "build:badcache1"] calls
+      "build should still run after a cache step failure"
+    let logsDir := projectDir / ".lake" / "hopscotch" / "logs"
+    let cacheLog := logsDir / "0-badcache1-cache.log"
+    let cacheLogContents ← IO.FS.readFile cacheLog
+    assertContains "warning" cacheLogContents
+      "cache log should contain a warning when lake cache get fails"
+    assertContains "exited with code" cacheLogContents
+      "cache log warning should report the exit code"
+
+/-- Scenario: a run interrupted just before `lake cache get` resumes from the cache step,
+    not the bump step, and completes normally. -/
+private def «resume from interrupted cache step» : IO Unit := do
+  withTempDir "hopscotch-cache-resume" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\ngood2\n"
+    configureMockLake projectDir "success"
+    let lakeCmd ← mockLakeCommand
+    -- Interrupt just before the cache step for the first commit.
+    let seen ← IO.mkRef 0
+    let interruptBeforeFirstCache (line : String) : IO Unit := do
+      if line.contains "] Running lake cache get" then
+        let current ← seen.get
+        seen.set (current + 1)
+        if current == 0 then
+          throw <| IO.userError "simulated interruption before cache"
+    try
+      let _ ← Runner.run {
+        itemSource := .file commitListPath
+        projectDir := projectDir
+        strategy := Runner.lakefileStrategy "batteries" lakeCmd true
+        cache := true
+        quiet := true
+      } interruptBeforeFirstCache
+    catch _ => pure ()
+    -- Verify the interrupted state has stage = .cacheGet.
+    let interruptedState ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
+    assertEq (some RunStage.cacheGet) interruptedState.stage
+      "interrupted state should record the cache stage"
+    -- Clear the calls log and resume.
+    IO.FS.writeFile (mockLakeCallsPath projectDir) ""
+    let resumeResult ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" lakeCmd true
+      cache := true
+      quiet := true
+    } ignoreOutput
+    assertEq 0 resumeResult.exitCode "resumed run should complete successfully"
+    let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
+    -- Resume should replay cache + build for good1 (skip its bump), then run all of good2.
+    assertEq ["cache:good1", "build:good1", "update:good2", "cache:good2", "build:good2"] calls
+      "resume should restart from the cache step without re-running the bump"
+
 /-- Scenario: bisect default end-state leaves the lakefile pinned to the first bad commit. -/
 private def «bisect default end state pins first bad commit» : IO Unit := do
   withTempDir "hopscotch-bisect-end-bad" fun dir => do
@@ -736,7 +840,10 @@ def suite : TestSuite := #[
   test_case «quiet := false does not suppress runner progress messages»,
   test_case «bisect default end state pins first bad commit»,
   test_case «bisect keep last good pins last good commit»,
-  test_case «linear keep last good pins last good commit»
+  test_case «linear keep last good pins last good commit»,
+  test_case «cache enabled creates cache log and build log»,
+  test_case «cache failure warns and build still runs»,
+  test_case «resume from interrupted cache step»
 ]
 
 end HopscotchTestLib.IOTests
