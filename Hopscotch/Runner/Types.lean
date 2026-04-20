@@ -58,6 +58,11 @@ structure Config where
       Has no effect when no commit passed (i.e. the very first commit failed),
       because there is no known-good commit to restore to. -/
   keepLastGood : Bool := false
+  /-- When true, run `lake cache get` after the bump step and before `lake build`,
+      so each probe can reuse prebuilt artifacts from the configured remote cache.
+      A non-zero exit from `lake cache get` is logged as a warning and does *not*
+      fail the probe; the build still runs. -/
+  cache : Bool := false
   strategy : RunStrategy
 
 /-- Final outcome returned to the CLI after a run or resume attempt. -/

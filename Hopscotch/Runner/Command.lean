@@ -78,13 +78,38 @@ private def runCommand (lakeCommand : String) (projectDir logPath : System.FileP
   return { exitCode := exitCode }
 
 /--
+A verify step that runs `lake cache get` to pull prebuilt artifacts from the
+configured remote before the build step. A non-zero exit is logged as a warning
+and the step still reports success, so a missing/broken cache never marks the
+commit as the culprit — the build still runs from source.
+-/
+private def cacheStep (lakeCommand : String) : ProbeStep := {
+  stage := .cache
+  label := "lake cache get"
+  run := fun projectDir logPath quiet => do
+    let result ← runCommand lakeCommand projectDir logPath #["cache", "get"] quiet
+    if result.exitCode != 0 then
+      emitLine
+        s!"warning: `lake cache get` exited with code {result.exitCode}; continuing to build\n"
+        logPath quiet
+    return true
+}
+
+/-- Prepend the cache step to the verify array when `cache` is true. -/
+private def withCacheStep (cache : Bool) (lakeCommand : String)
+    (verify : Array ProbeStep) : Array ProbeStep :=
+  if cache then #[cacheStep lakeCommand] ++ verify else verify
+
+/--
 Build the default lakefile-based run strategy.
 
 The bump step rewrites the dependency rev in the project's lakefile (auto-detecting
 `lakefile.lean` vs `lakefile.toml`) and runs `lake update <dependencyName>` to fetch
-the new version. The verify array holds a single `lake build` step.
+the new version. The verify array holds a single `lake build` step, optionally
+preceded by a `lake cache get` step when `cache` is true.
 -/
-def lakefileStrategy (dependencyName lakeCommand : String) : RunStrategy := {
+def lakefileStrategy (dependencyName lakeCommand : String)
+    (cache : Bool := false) : RunStrategy := {
   name := dependencyName
   mkBump := fun version => {
     stage := .bump
@@ -95,7 +120,7 @@ def lakefileStrategy (dependencyName lakeCommand : String) : RunStrategy := {
         #["update", dependencyName] quiet
       return result.exitCode == 0
   }
-  verify := #[{
+  verify := withCacheStep cache lakeCommand #[{
     stage := .build
     label := "lake build"
     run := fun projectDir logPath quiet => do
@@ -127,10 +152,11 @@ def lakefileStrategy (dependencyName lakeCommand : String) : RunStrategy := {
 Build the toolchain run strategy.
 
 The bump step writes the given toolchain string to `lean-toolchain`. The verify
-array holds a single `lake build` step, which will use the just-written toolchain
-via `buildCommand`'s `elan run` resolution.
+array holds a single `lake build` step, optionally preceded by a `lake cache get`
+step when `cache` is true. `lake build` uses the just-written toolchain via
+`buildCommand`'s `elan run` resolution.
 -/
-def toolchainStrategy (lakeCommand : String) : RunStrategy := {
+def toolchainStrategy (lakeCommand : String) (cache : Bool := false) : RunStrategy := {
   name := "toolchain"
   mkBump := fun version => {
     stage := .bump
@@ -140,7 +166,7 @@ def toolchainStrategy (lakeCommand : String) : RunStrategy := {
       IO.FS.writeFile logPath s!"wrote lean-toolchain: {version}\n"
       return true
   }
-  verify := #[{
+  verify := withCacheStep cache lakeCommand #[{
     stage := .build
     label := "lake build"
     run := fun projectDir logPath quiet => do

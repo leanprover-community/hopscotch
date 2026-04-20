@@ -39,6 +39,7 @@ When `PersistedState.stage` is `none` the runner is between probes.
 -/
 inductive RunStage where
   | bump
+  | cache
   | build
   | gitCheck
   deriving Repr, Inhabited, BEq, DecidableEq, ToJson, FromJson
@@ -152,6 +153,7 @@ def logPath (paths : Paths) (namePrefix : String) (commit : String) (stage : Run
   let stageName :=
     match stage with
     | .bump => "bump"
+    | .cache => "cache"
     | .build => "build"
     | .gitCheck => "git-check"
   paths.logsDir / s!"{namePrefix}-{sanitizeForFileName (shortCommit commit)}-{stageName}.log"

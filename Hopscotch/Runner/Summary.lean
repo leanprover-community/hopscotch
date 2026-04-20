@@ -11,6 +11,7 @@ open Hopscotch.State
 private def failureStageLine (stage : Option RunStage) : String :=
   match stage with
   | some .bump => "Failure stage: lake update"
+  | some .cache => "Failure stage: lake cache get"
   | some .build => "Failure stage: lake build"
   | some .gitCheck => "Failure stage: git cleanliness check"
   | none => "Failure stage: unknown"
@@ -66,6 +67,7 @@ def summaryText (state : PersistedState) : String :=
         let stageLine :=
           match state.stage with
           | some .bump => "Stage: lake update"
+          | some .cache => "Stage: lake cache get"
           | some .build => "Stage: lake build"
           | some .gitCheck => "Stage: git cleanliness check"
           | none => "Stage: pending"
