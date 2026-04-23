@@ -8,6 +8,8 @@ open Hopscotch
 open Hopscotch.State
 open Lean
 
+def versionString : String := "hopscotch 1.4.0"
+
 /-- Shared usage text for `hopscotch dep`. -/
 def depUsage : String :=
   "usage: hopscotch dep <dependency-name> " ++
@@ -20,6 +22,19 @@ def toolchainUsage : String :=
   "usage: hopscotch toolchain --toolchains-file PATH " ++
   "[--project-dir DIR] [--quiet] [--allow-dirty-workspace] " ++
   "[--keep-last-good] [--scan-mode [linear|bisect]] [--config-file PATH]"
+
+def helpText : String :=
+  "hopscotch — binary-search or linearly scan dependency commits to find a regression\n\n" ++
+  "usage: hopscotch <subcommand> [OPTIONS]\n\n" ++
+  "Subcommands:\n" ++
+  "  dep <name>   Bisect/scan a dependency's commit range\n" ++
+  "  toolchain    Bisect/scan a list of toolchain strings\n" ++
+  "  clean        Remove session state (.lake/hopscotch/)\n\n" ++
+  "Global flags:\n" ++
+  "  --help, -h   Show this help text\n" ++
+  "  --version    Print version and exit\n\n" ++
+  depUsage ++ "\n\n" ++ toolchainUsage ++ "\n\n" ++
+  "usage: hopscotch clean [--project-dir DIR]"
 
 /-- Config file options for the `dep` subcommand. All fields are optional;
     explicit CLI flags take precedence over values set here. -/
@@ -212,22 +227,23 @@ private def parseCleanOptions (projectDir : Option System.FilePath)
 
 /-- The action to perform, parsed from CLI arguments. -/
 inductive Command where
-  | run   (config : Runner.Config)
-  | clean (projectDir : System.FilePath)
+  | run     (config : Runner.Config)
+  | clean   (projectDir : System.FilePath)
+  | version
+  | help
 
 /-- Parse CLI arguments into a `Command`, dispatching on the subcommand. -/
 def parseArgs (args : List String) : IO Command := do
   match args with
+  | "--version" :: _    => return .version
+  | "--help" :: _       => return .help
+  | "-h" :: _           => return .help
   | "dep" :: rest       => return .run (← parseDep rest)
   | "toolchain" :: rest => return .run (← parseToolchain rest)
   | "clean" :: rest     =>
       let projectDir ← parseCleanOptions none rest
       return .clean projectDir
   | _ =>
-      throw <| IO.userError
-        ("usage: hopscotch <subcommand> [OPTIONS]\n" ++
-         "Subcommands: dep, toolchain, clean\n\n" ++
-         depUsage ++ "\n" ++ toolchainUsage ++ "\n" ++
-         "usage: hopscotch clean [--project-dir DIR]")
+      throw <| IO.userError helpText
 
 end Hopscotch.CLI

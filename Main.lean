@@ -22,6 +22,12 @@ def main (args : List String) : IO UInt32 := do
         else
           IO.println s!"Nothing to clean ({stateRoot} does not exist)"
         return 0
+    | .version =>
+        IO.println CLI.versionString
+        return 0
+    | .help =>
+        IO.println CLI.helpText
+        return 0
   catch error =>
     let stderrColor ← detectStderrColor
     IO.eprintln <| colorize stderrColor .failure error.toString

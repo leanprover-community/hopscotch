@@ -3,7 +3,7 @@ import Lake
 open Lake DSL
 
 package "hopscotch" where
-  version := v!"1.0.0"
+  version := v!"1.4.0"
 
 lean_lib Hopscotch
 
