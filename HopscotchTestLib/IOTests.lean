@@ -389,7 +389,8 @@ private def «bisect resumes interrupted midpoint probe» : IO Unit := do
     assertEq ["build:good2", "update:good3", "build:good3", "update:badbuild4"] calls
       "resumed bisect runs should reuse cached probes and restart the interrupted midpoint at the saved stage, then restore the culprit commit"
 
-/-- Scenario: bisect aborts if the supplied bad endpoint no longer fails on re-verification. -/
+/-- Scenario: bisect aborts if the supplied bad endpoint no longer fails on re-verification
+    (without --keep-last-good). -/
 private def «bisect rejects successful bad endpoint» : IO Unit := do
   withTempDir "hopscotch-bisect-endpoint" fun dir => do
     let projectDir := dir / "downstream"
@@ -410,6 +411,36 @@ private def «bisect rejects successful bad endpoint» : IO Unit := do
     catch error =>
       assertContains "requires a known failing endpoint" error.toString
         "bisect should raise a precondition error when the bad endpoint passes"
+
+/-- Scenario: bisect with --keep-last-good exits 0 and pins the top commit when the bad
+    endpoint passes (all-pass; no culprit). -/
+private def «bisect all-pass with keep-last-good» : IO Unit := do
+  withTempDir "hopscotch-bisect-allpass" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\ngood2\ngood3\n"
+    configureMockLake projectDir "success"
+    let result ← Runner.run {
+      itemSource   := .file commitListPath
+      projectDir   := projectDir
+      strategy     := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+      runMode      := .bisect
+      quiet        := true
+      keepLastGood := true
+    } ignoreOutput
+    assertEq 0 result.exitCode
+      "bisect all-pass with --keep-last-good should exit 0"
+    let lakefile ← IO.FS.readFile (projectDir / "lakefile.toml")
+    assertTrue (lakefile.contains "rev = \"good3\"")
+      "lakefile should be pinned to the last (top) commit"
+    let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
+    assertEq (.completed) state.status
+      "state should be completed"
+    assertEq (some "good3") state.lastSuccessfulCommit
+      "lastSuccessfulCommit should be the top commit"
+    assertContains "no culprit found" result.summary
+      "summary should say no culprit was found"
 
 /-- Scenario: switching between linear and bisect on one state directory is rejected. -/
 private def «reject mode switch on resume» : IO Unit := do
@@ -726,6 +757,7 @@ def suite : TestSuite := #[
   test_case «bisect treats update failures as bad»,
   test_case «bisect resumes interrupted midpoint probe»,
   test_case «bisect rejects successful bad endpoint»,
+  test_case «bisect all-pass with keep-last-good»,
   test_case «reject mode switch on resume»,
   test_case «reject changed bisect commit list on resume»,
   test_case «bisect allow dirty workspace is accepted»,

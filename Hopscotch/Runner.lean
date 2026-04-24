@@ -197,6 +197,9 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
     (emit : ConsoleStyle → String → IO Unit) : IO RunResult := do
   let state ← loadInitialState paths config commits
   validateState state commits
+  if state.status == .completed then
+    let summary ← writeSummary paths state
+    return { exitCode := 0, summary := summary, summaryPath := paths.summaryPath }
   if state.status == .failed then
     let summary ← writeSummary paths state
     return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
@@ -250,8 +253,12 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
     match ← runProbe config paths state stepNum probeIndex commit emit with
     | .success =>
         if !bisect.verifiedBad then
-          throw <| IO.userError
-            s!"bisect mode requires a known failing endpoint, but the last commit succeeded during re-verification: {commit}"
+          if config.keepLastGood then
+            let (_, summary) ← saveState paths <| buildBisectAllPassState state bisect commit
+            return { exitCode := 0, summary, summaryPath := paths.summaryPath }
+          else
+            throw <| IO.userError
+              s!"bisect mode requires a known failing endpoint, but the last commit succeeded during re-verification: {commit}\nHint: pass --keep-last-good to treat an all-passing range as a completed run with no culprit."
         advanceOrResolve { bisect with
           knownGoodIndex := probeIndex
           probeResults := recordProbeResult bisect.probeResults {

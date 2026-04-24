@@ -41,6 +41,8 @@ Binary-searches a commit list to find the exact first failing commit. Useful whe
 
 Bisect validates that the last commit in the range actually fails before starting, but does **not** verify the first commit (it is assumed to be good — typically the currently-pinned rev). The search narrows until `knownGoodIndex` and `knownBadIndex` are adjacent — the commit at `knownBadIndex` is reported as the first failure. If the good endpoint was never actually probed during the search, the summary notes this.
 
+If the last commit passes during validation — meaning the entire range is good and there is no culprit — bisect exits with an error and suggests using `--keep-last-good`. With that flag, hopscotch instead treats the run as an all-pass result (exit code `0`, summary says "no culprit found") and leaves the lakefile pinned to the last commit.
+
 ### Linear (`--scan-mode linear`)
 
 Steps linearly through the commit list from oldest to newest. Stops at the first failure. Best for:
@@ -105,6 +107,8 @@ When `hopscotch` finds a failure boundary, it leaves the downstream's lakefile (
 Bisect mode requires this explicit restore step because it jumps around during the binary search and the last probe it runs is not necessarily the culprit commit. Linear mode finishes naturally at the failing commit, but also applies the restore for consistency.
 
 Pass `--keep-last-good` to pin to the **last passing commit** instead — useful when you want the project in a buildable state after the search (for example, to run the test suite or inspect the working build before tackling the fix). If the very first commit in the range fails, there is no known-good commit to restore to, so `--keep-last-good` has no effect in that case.
+
+`--keep-last-good` also changes bisect's behavior when the bad endpoint passes during initial validation (i.e. the entire range turns out to be good): instead of aborting with an error, hopscotch records the run as completed with no culprit and exits with code `0`. Without the flag, an error is raised with a hint to add `--keep-last-good`.
 
 ### Git check and `--allow-dirty-workspace`
 

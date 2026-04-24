@@ -40,9 +40,16 @@ def summaryText (state : PersistedState) : String :=
   let statusLines :=
     match state.status with
     | .completed =>
-        match state.lastSuccessfulCommit with
-        | some commit => [s!"Status: completed", modeLine, s!"Last successful commit: {commit}"]
-        | none => [s!"Status: completed", modeLine]
+        match state.runMode with
+        | .linear =>
+            match state.lastSuccessfulCommit with
+            | some commit => [s!"Status: completed", modeLine, s!"Last successful commit: {commit}"]
+            | none => [s!"Status: completed", modeLine]
+        | .bisect =>
+            let last := state.lastSuccessfulCommit.getD "unknown"
+            [ s!"Status: completed", modeLine,
+              "All commits passed — no culprit found.",
+              s!"Last passing commit: {last}" ]
     | .failed =>
         match state.runMode with
         | .linear =>

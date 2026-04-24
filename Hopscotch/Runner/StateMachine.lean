@@ -61,7 +61,8 @@ the two indices are adjacent, at which point the exact boundary is known.
   Initial: Running(knownGoodIndex=0, knownBadIndex=N-1, verifiedBad=false)
        |
        v  probe commits[N-1]  <-- must fail to confirm the supplied bad endpoint
-       | success -----> error: "bad endpoint passed"
+       | success (--keep-last-good) -----> Completed  (all-pass; no culprit)
+       | success (default)          -----> error: "bad endpoint passed"
        | failure
        v  verifiedBad=true
        .
@@ -258,6 +259,26 @@ def buildBisectResolvedState (base : PersistedState) (commits : Array String)
     lastLogPath := failure.logPath
   }
 
+/--
+Transition to `Completed` when the bisect bad endpoint passes with `--keep-last-good`.
+
+The probe for `topCommit` (the upper end of the range) succeeded, so all commits in
+the range are good and there is no culprit. The bisect bounds are preserved for
+reference but the status reflects the all-pass outcome.
+-/
+def buildBisectAllPassState (base : PersistedState) (bisect : BisectState)
+    (topCommit : String) : PersistedState :=
+  { base with
+    runMode              := .bisect
+    bisect               := some bisect
+    nextIndex            := bisect.knownBadIndex
+    currentCommit        := none
+    lastSuccessfulCommit := some topCommit
+    status               := .completed
+    stage                := none
+    lastLogPath          := none
+  }
+
 /-- Create the initial persisted state for a fresh linear-mode session. -/
 private def mkInitialAdvanceState (paths : Paths) (strategyName : String)
     (commits : Array String) : IO PersistedState := do
@@ -399,7 +420,8 @@ private def validateBisectState (state : PersistedState) (commits : Array String
   let bounds := bisectBounds bisect
   match state.status with
   | .completed =>
-      throw <| IO.userError "stored bisect state cannot be completed"
+      if state.lastSuccessfulCommit.isNone then
+        throw <| IO.userError "stored bisect all-pass state is missing lastSuccessfulCommit"
   | .failed =>
       if bisect.knownBadIndex != bisect.knownGoodIndex + 1 then
         throw <| IO.userError "stored bisect failure is missing an exact boundary"
