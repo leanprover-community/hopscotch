@@ -10,4 +10,5 @@ import Hopscotch.Runner.StateMachine
 import Hopscotch.Runner
 import Hopscotch.State
 import Hopscotch.Util
+import Hopscotch.Results
 import Hopscotch.CLI

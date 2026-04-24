@@ -73,6 +73,16 @@ private def «stop at first build failure» : IO Unit := do
     let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
     assertEq ["update:good1", "build:good1", "update:badbuild", "build:badbuild"] calls
       "runner should stop immediately after the first failure"
+    -- Assert that results.json is written alongside state.json with the public schema.
+    let resultsPath := projectDir / ".lake" / "hopscotch" / "results.json"
+    assertTrue (← resultsPath.pathExists) "results.json should be written on failure"
+    let results ← readJsonFile (α := Hopscotch.Results.ResultsJson) resultsPath
+    assertEq "failed" results.status "results.json should record the failed status"
+    assertEq 1 results.exitCode "results.json should record exit code 1"
+    assertEq (some "badbuild") results.firstFailingCommit
+      "results.json should expose firstFailingCommit"
+    assertEq (some "lake build") results.failureStage
+      "results.json should expose the build failure stage"
 
 /-- Scenario: a bump failure stops the loop before any verify steps run for that commit. -/
 private def «stop at first update failure» : IO Unit := do
@@ -600,7 +610,7 @@ private def «resume with stale schema version is rejected» : IO Unit := do
     let staleState : PersistedState := {
       schemaVersion := State.currentSchemaVersion - 1
       projectDir := paths.projectDir
-      strategyName := "batteries"
+      strategyScope := "batteries"
       items := #["good1", "badbuild"]
       runMode := .linear
       nextIndex := 0

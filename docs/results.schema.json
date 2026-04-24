@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/leanprover-community/hopscotch/blob/main/docs/results.schema.json",
+  "title": "Hopscotch results.json",
+  "description": "Public, versioned structured output of a hopscotch run. Written to `<projectDir>/.lake/hopscotch/results.json` after every state transition, and optionally mirrored to the path given by `--results-json PATH`.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "status",
+    "mode",
+    "exitCode",
+    "strategyScope",
+    "projectDir",
+    "items",
+    "firstFailingCommit",
+    "lastSuccessfulCommit",
+    "currentCommit",
+    "failureStage",
+    "nextIndex",
+    "culpritLogPath",
+    "lastLogPath",
+    "logsDir",
+    "summaryPath",
+    "bisect",
+    "updatedAt"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version for this file. Bumped on any backward-incompatible change; independent of the runner's internal state.json schema."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["running", "failed", "completed"],
+      "description": "Coarse run phase. `running` = a probe is in progress or queued. `failed` = the search found a failing commit (or a git-cleanliness check blocked resume). `completed` = every commit passed (linear mode, or bisect with --keep-last-good and an all-good range)."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["linear", "bisect"],
+      "description": "Execution strategy."
+    },
+    "exitCode": {
+      "type": "integer",
+      "enum": [0, 1],
+      "description": "Exit code the CLI would return for this state: 1 when `status = failed`, 0 otherwise. (The `2` tool-error code is never written here — a tool error aborts before a state transition.)"
+    },
+    "strategyScope": {
+      "type": "string",
+      "description": "Identity of the bump/verify strategy. For `hopscotch dep <name>` this is the dependency name; for `hopscotch toolchain` it is `toolchain`."
+    },
+    "projectDir": {
+      "type": "string",
+      "description": "Absolute, realpath-normalized path to the downstream project root."
+    },
+    "items": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "The full ordered list of probed items (commit SHAs in `dep` mode; toolchain strings in `toolchain` mode)."
+    },
+    "firstFailingCommit": {
+      "type": ["string", "null"],
+      "description": "The first failing commit when `status = failed`; `null` otherwise. In bisect mode this equals `items[bisect.knownBadIndex]`."
+    },
+    "lastSuccessfulCommit": {
+      "type": ["string", "null"],
+      "description": "The most recent commit observed to succeed. `null` if no commit has passed yet (e.g. the very first commit failed). In bisect mode, equals `items[bisect.knownGoodIndex]` once any probe has succeeded."
+    },
+    "currentCommit": {
+      "type": ["string", "null"],
+      "description": "The commit the run is currently positioned at. While `status = running` this is the next commit to probe; when `failed`, the failing commit; when `completed`, typically `null`."
+    },
+    "failureStage": {
+      "type": ["string", "null"],
+      "enum": [null, "lake update", "lake build", "git cleanliness check"],
+      "description": "Which step of the probe failed, when `status = failed`. `lake update` = the bump step (rewrite lakefile/toolchain + `lake update`). `lake build` = a verify step. `git cleanliness check` = resume was blocked because the working tree is dirty after a fix (linear mode only)."
+    },
+    "nextIndex": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Index into `items` the runner is currently positioned at. After a completed linear run this equals `items.length`. In bisect failed state it equals `bisect.knownBadIndex`."
+    },
+    "culpritLogPath": {
+      "type": ["string", "null"],
+      "description": "Absolute path to the failing log inside the culprit subdirectory (`.lake/hopscotch/logs/culprit/`). Populated iff `status = failed` and a log was written. The file has the same basename as `lastLogPath` — both point at the same content, but the `culprit/` copy is durable across resumes."
+    },
+    "lastLogPath": {
+      "type": ["string", "null"],
+      "description": "Absolute path to the log file from the most recent probe step (successful or failing). Naming: `{logPrefix}-{shortSha}-{stage}.log`. See CLAUDE.md for the log prefix scheme."
+    },
+    "logsDir": {
+      "type": "string",
+      "description": "Absolute path to the logs directory (`.lake/hopscotch/logs/`)."
+    },
+    "summaryPath": {
+      "type": "string",
+      "description": "Absolute path to the companion human-readable `summary.md`."
+    },
+    "bisect": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/Bisect" }
+      ],
+      "description": "Bisect-specific state. Present iff `mode = bisect`."
+    },
+    "updatedAt": {
+      "type": "string",
+      "description": "UTC timestamp of the last state transition, ISO-8601 (`YYYY-MM-DDTHH:MM:SSZ`). Mirrors `PersistedState.updatedAt`."
+    }
+  },
+  "$defs": {
+    "Bisect": {
+      "type": "object",
+      "required": [
+        "knownGoodIndex",
+        "knownBadIndex",
+        "knownGoodCommit",
+        "knownBadCommit",
+        "knownGoodWasProbed",
+        "verifiedBad",
+        "probeResults"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "knownGoodIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index of the most recent known-good commit. Starts at 0 (range lower bound, assumed good) and only increases."
+        },
+        "knownBadIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index of the known-bad endpoint. Starts at `items.length - 1` (range upper bound) and only decreases. When `status = failed` the window is adjacent: `knownBadIndex == knownGoodIndex + 1`."
+        },
+        "knownGoodCommit": {
+          "type": ["string", "null"],
+          "description": "`items[knownGoodIndex]`, or `null` if out of range."
+        },
+        "knownBadCommit": {
+          "type": ["string", "null"],
+          "description": "`items[knownBadIndex]`, or `null` if out of range."
+        },
+        "knownGoodWasProbed": {
+          "type": "boolean",
+          "description": "`true` iff the commit at `knownGoodIndex` has actually been probed and succeeded. `false` when the good endpoint was only assumed (the typical case for `items[0]` at the start of a run)."
+        },
+        "verifiedBad": {
+          "type": "boolean",
+          "description": "`true` once the initial bad endpoint has been probed and confirmed to fail. The binary-search loop does not start probing midpoints until this is true."
+        },
+        "probeResults": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProbeResult" },
+          "description": "Cached results of every commit probed so far. Ordered by probe completion time (most recent last). Consumers can reconstruct the bisect path taken from this array."
+        }
+      }
+    },
+    "ProbeResult": {
+      "type": "object",
+      "required": ["index", "commit", "outcome", "stage", "logPath"],
+      "additionalProperties": false,
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Position in `items` that was probed."
+        },
+        "commit": {
+          "type": "string",
+          "description": "The probed item (commit SHA or toolchain string)."
+        },
+        "outcome": {
+          "type": "string",
+          "enum": ["success", "failure"],
+          "description": "Whether the probe passed or failed."
+        },
+        "stage": {
+          "type": ["string", "null"],
+          "enum": [null, "lake update", "lake build", "git cleanliness check"],
+          "description": "The failing stage. `null` on success."
+        },
+        "logPath": {
+          "type": ["string", "null"],
+          "description": "Absolute path to the log from this probe. Populated on failure; may be `null` on success."
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schemaVersion": 1,
+      "status": "failed",
+      "mode": "bisect",
+      "exitCode": 1,
+      "strategyScope": "mathlib",
+      "projectDir": "/Users/alice/MyProject",
+      "items": ["a0", "b1", "c2", "d3", "e4"],
+      "firstFailingCommit": "e4",
+      "lastSuccessfulCommit": "d3",
+      "currentCommit": "e4",
+      "failureStage": "lake build",
+      "nextIndex": 4,
+      "culpritLogPath": "/Users/alice/MyProject/.lake/hopscotch/logs/culprit/0-4-e4-build.log",
+      "lastLogPath": "/Users/alice/MyProject/.lake/hopscotch/logs/0-4-e4-build.log",
+      "logsDir": "/Users/alice/MyProject/.lake/hopscotch/logs",
+      "summaryPath": "/Users/alice/MyProject/.lake/hopscotch/summary.md",
+      "bisect": {
+        "knownGoodIndex": 3,
+        "knownBadIndex": 4,
+        "knownGoodCommit": "d3",
+        "knownBadCommit": "e4",
+        "knownGoodWasProbed": true,
+        "verifiedBad": true,
+        "probeResults": [
+          {
+            "index": 4,
+            "commit": "e4",
+            "outcome": "failure",
+            "stage": "lake build",
+            "logPath": "/Users/alice/MyProject/.lake/hopscotch/logs/0-4-e4-build.log"
+          },
+          {
+            "index": 2,
+            "commit": "c2",
+            "outcome": "success",
+            "stage": null,
+            "logPath": null
+          },
+          {
+            "index": 3,
+            "commit": "d3",
+            "outcome": "success",
+            "stage": null,
+            "logPath": null
+          }
+        ]
+      },
+      "updatedAt": "2026-04-24T14:05:22Z"
+    }
+  ]
+}

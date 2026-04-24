@@ -4,6 +4,7 @@ import Hopscotch.Runner.Summary
 import Hopscotch.Runner.StateMachine
 import Hopscotch.ItemList
 import Hopscotch.GitHub
+import Hopscotch.Results
 import Hopscotch.State
 import Hopscotch.Util
 
@@ -93,7 +94,7 @@ private def runProbe (config : Config) (paths : Paths) (base : PersistedState)
   emit .attempt s!"[{timestamp}] Attempting commit {commit} ({index + 1}/{base.items.size})"
   -- Bump phase: apply the version then fetch. Skipped when resuming mid-verify.
   if !resumingVerify then
-    let _ ← saveState paths <| buildRunningState base index commit (some bumpStep.stage)
+    let _ ← saveState paths config.resultsJsonPath <| buildRunningState base index commit (some bumpStep.stage)
     let bumpLogPath := State.logPath paths namePrefix commit bumpStep.stage
     emit .running s!"[{← nowUtcString}] Running {bumpStep.label}"
     let bumpOk ← bumpStep.run paths.projectDir bumpLogPath config.quiet
@@ -108,7 +109,7 @@ private def runProbe (config : Config) (paths : Paths) (base : PersistedState)
     | some stage =>
         config.strategy.verify.findIdx? (·.stage == stage) |>.getD 0
   for step in config.strategy.verify.extract startAt config.strategy.verify.size do
-    let _ ← saveState paths <| buildRunningState base index commit (some step.stage)
+    let _ ← saveState paths config.resultsJsonPath <| buildRunningState base index commit (some step.stage)
     let verifyLogPath := State.logPath paths namePrefix commit step.stage
     emit .running s!"[{← nowUtcString}] Running {step.label}"
     let stepOk ← step.run paths.projectDir verifyLogPath config.quiet
@@ -137,6 +138,7 @@ private def runAdvance (config : Config) (paths : Paths) (commits : Array String
   validateState state commits
   if state.status == .completed then
     let summary ← writeSummary paths state
+    Results.writeResults paths config.resultsJsonPath state
     return { exitCode := 0, summary := summary, summaryPath := paths.summaryPath }
 
   -- `lastSummary` captures the most recent summary written by `saveState`.
@@ -146,7 +148,7 @@ private def runAdvance (config : Config) (paths : Paths) (commits : Array String
     let commit := commits[index]!
     match ← runProbe config paths state index index commit emit with
     | .failure stage logPath =>
-        let (_, summary) ← saveState paths <| buildFailureState state index commit stage logPath
+        let (_, summary) ← saveState paths config.resultsJsonPath <| buildFailureState state index commit stage logPath
         copyCulpritLog paths logPath
         return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
     | .success =>
@@ -161,12 +163,12 @@ private def runAdvance (config : Config) (paths : Paths) (commits : Array String
               let buildLogPath := State.logPath paths (config.strategy.logPrefix index index) commit .build
               emit .failure
                 s!"[{← nowUtcString}] Resume blocked: commit the fix for {commit} or rerun with --allow-dirty-workspace"
-              let (_, summary) ← saveState paths <| buildFailureState state index commit .gitCheck buildLogPath
+              let (_, summary) ← saveState paths config.resultsJsonPath <| buildFailureState state index commit .gitCheck buildLogPath
               copyCulpritLog paths buildLogPath
               return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
         if resumedFailedCommit && index == resumeIndex then
           clearCulpritLogs paths
-        let saved ← saveState paths <| advanceAfterSuccess state commits index commit
+        let saved ← saveState paths config.resultsJsonPath <| advanceAfterSuccess state commits index commit
         state := saved.1
         lastSummary := saved.2
   return { exitCode := 0, summary := lastSummary, summaryPath := paths.summaryPath }
@@ -199,9 +201,11 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
   validateState state commits
   if state.status == .completed then
     let summary ← writeSummary paths state
+    Results.writeResults paths config.resultsJsonPath state
     return { exitCode := 0, summary := summary, summaryPath := paths.summaryPath }
   if state.status == .failed then
     let summary ← writeSummary paths state
+    Results.writeResults paths config.resultsJsonPath state
     return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
   -- Bisect restores only `lean-toolchain` between probes, not source files.
   -- Uncommitted changes would therefore silently affect every probe in the search.
@@ -229,7 +233,7 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
         | none =>
             match knownBadFailureResult? bisect with
             | some failure =>
-                let (_, summary) ← saveState paths <| buildBisectResolvedState state commits bisect failure
+                let (_, summary) ← saveState paths config.resultsJsonPath <| buildBisectResolvedState state commits bisect failure
                 if let some lp := failure.logPath then copyCulpritLog paths lp
                 return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
             | none =>
@@ -239,12 +243,12 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
     let advanceOrResolve (updatedBisect : BisectState) : IO RunResult := do
       match nextBisectProbeIndex? (bisectBounds updatedBisect) with
       | some nextIndex =>
-          let saved ← saveState paths <| buildBisectSearchState state commits updatedBisect nextIndex
+          let saved ← saveState paths config.resultsJsonPath <| buildBisectSearchState state commits updatedBisect nextIndex
           loop saved.1
       | none =>
           match knownBadFailureResult? updatedBisect with
           | some failure =>
-              let (_, summary) ← saveState paths <| buildBisectResolvedState state commits updatedBisect failure
+              let (_, summary) ← saveState paths config.resultsJsonPath <| buildBisectResolvedState state commits updatedBisect failure
               if let some lp := failure.logPath then copyCulpritLog paths lp
               return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
           | none =>
@@ -254,7 +258,7 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
     | .success =>
         if !bisect.verifiedBad then
           if config.keepLastGood then
-            let (_, summary) ← saveState paths <| buildBisectAllPassState state bisect commit
+            let (_, summary) ← saveState paths config.resultsJsonPath <| buildBisectAllPassState state bisect commit
             return { exitCode := 0, summary, summaryPath := paths.summaryPath }
           else
             throw <| IO.userError
@@ -304,7 +308,7 @@ private def resolveItems (config : Config) (paths : Paths)
             | some url => pure url
             | none =>
                 throw <| IO.userError
-                  s!"no git URL found for '{config.strategy.name}'; \
+                  s!"no git URL found for '{config.strategy.scope}'; \
                      use --git-url to specify it"
       let some (owner, repo) := GitHub.parseRepoId resolvedUrl
         | throw <| IO.userError
@@ -328,7 +332,7 @@ private def resolveItems (config : Config) (paths : Paths)
             | some rev => pure rev
             | none =>
                 let sha ← fetchDefaultOnce
-                warn s!"No pinned rev found for '{config.strategy.name}'; \
+                warn s!"No pinned rev found for '{config.strategy.scope}'; \
                   using tip of default branch as lower bound: {shortCommit sha}"
                 pure sha
       let resolvedTo ←

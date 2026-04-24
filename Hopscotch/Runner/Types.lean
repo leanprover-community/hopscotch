@@ -27,8 +27,8 @@ structure ProbeStep where
     Each probe runs `mkBump` first; on success, each step in `verify` runs in order.
     A failure at any step aborts the probe immediately. -/
 structure RunStrategy where
-  /-- Identity string used for resume validation and state persistence. -/
-  name : String
+  /-- Identity string used for resume validation and state persistence. Should roughly correspond to 'what is being bumped' -/
+  scope : String
   /-- Construct the bump step for a specific version. Called once per probe. -/
   mkBump : String → ProbeStep
   /-- Ordered steps to verify the project after bumping. -/
@@ -58,6 +58,9 @@ structure Config where
       Has no effect when no commit passed (i.e. the very first commit failed),
       because there is no known-good commit to restore to. -/
   keepLastGood : Bool := false
+  /-- Optional additional path to mirror `.lake/hopscotch/results.json` to
+      after every state transition. The internal copy is always written. -/
+  resultsJsonPath : Option System.FilePath := none
   strategy : RunStrategy
 
 /-- Final outcome returned to the CLI after a run or resume attempt. -/

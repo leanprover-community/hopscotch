@@ -94,7 +94,7 @@ semantics.
 structure PersistedState where
   schemaVersion : Nat := currentSchemaVersion
   projectDir : System.FilePath
-  strategyName : String := ""  -- empty for states written before strategy tracking was added
+  strategyScope : String
   items : Array String
   runMode : RunMode := .linear
   bisect : Option BisectState := none
@@ -113,6 +113,7 @@ structure Paths where
   stateRoot : System.FilePath
   statePath : System.FilePath
   summaryPath : System.FilePath
+  resultsPath : System.FilePath
   logsDir : System.FilePath
   culpritLogsDir : System.FilePath
   deriving Repr
@@ -126,6 +127,7 @@ def mkPaths (projectDir : System.FilePath) : IO Paths := do
     stateRoot := stateRoot
     statePath := stateRoot / "state.json"
     summaryPath := stateRoot / "summary.md"
+    resultsPath := stateRoot / "results.json"
     logsDir := stateRoot / "logs"
     culpritLogsDir := stateRoot / "logs" / "culprit"
   }

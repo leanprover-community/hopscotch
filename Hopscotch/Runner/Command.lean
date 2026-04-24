@@ -85,7 +85,7 @@ The bump step rewrites the dependency rev in the project's lakefile (auto-detect
 the new version. The verify array holds a single `lake build` step.
 -/
 def lakefileStrategy (dependencyName lakeCommand : String) : RunStrategy := {
-  name := dependencyName
+  scope := dependencyName
   mkBump := fun version => {
     stage := .bump
     label := s!"lake update {dependencyName}"
@@ -131,7 +131,7 @@ array holds a single `lake build` step, which will use the just-written toolchai
 via `buildCommand`'s `elan run` resolution.
 -/
 def toolchainStrategy (lakeCommand : String) : RunStrategy := {
-  name := "toolchain"
+  scope := "toolchain"
   mkBump := fun version => {
     stage := .bump
     label := s!"write lean-toolchain {version}"

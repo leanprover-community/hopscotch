@@ -1,5 +1,6 @@
 import Hopscotch.Runner.Types
 import Hopscotch.Runner.Summary
+import Hopscotch.Results
 import Hopscotch.State
 import Hopscotch.Util
 
@@ -148,13 +149,17 @@ def knownBadFailureResult? (bisect : BisectState) : Option ProbeResult :=
   bisect.probeResults.findRev? fun result =>
     result.index == bisect.knownBadIndex && result.outcome == .failure
 
-/-- Persist state after refreshing its `updatedAt` timestamp and rewriting the summary.
-    Returns the updated state (with new timestamp) and the rendered summary text,
-    so callers can return the summary without a redundant second write. -/
-def saveState (paths : Paths) (state : PersistedState) : IO (PersistedState × String) := do
+/-- Persist state after refreshing its `updatedAt` timestamp and rewriting the summary
+    and the structured `results.json` view. The `extraResultsPath` is the optional user-
+    supplied mirror path (from `--results-json`). Returns the updated state (with new
+    timestamp) and the rendered summary text, so callers can return the summary without
+    a redundant second write. -/
+def saveState (paths : Paths) (extraResultsPath : Option System.FilePath)
+    (state : PersistedState) : IO (PersistedState × String) := do
   let state := { state with updatedAt := ← nowUtcString }
   State.save paths state
   let summary ← writeSummary paths state
+  Results.writeResults paths extraResultsPath state
   pure (state, summary)
 
 /-!
@@ -280,12 +285,12 @@ def buildBisectAllPassState (base : PersistedState) (bisect : BisectState)
   }
 
 /-- Create the initial persisted state for a fresh linear-mode session. -/
-private def mkInitialAdvanceState (paths : Paths) (strategyName : String)
+private def mkInitialAdvanceState (paths : Paths) (strategyScope : String)
     (commits : Array String) : IO PersistedState := do
   let updatedAt ← nowUtcString
   return {
     projectDir := paths.projectDir
-    strategyName := strategyName
+    strategyScope := strategyScope
     items := commits
     runMode := .linear
     nextIndex := 0
@@ -298,7 +303,7 @@ private def mkInitialAdvanceState (paths : Paths) (strategyName : String)
   }
 
 /-- Create the initial persisted state for a fresh bisect session. -/
-private def mkInitialBisectState (paths : Paths) (strategyName : String)
+private def mkInitialBisectState (paths : Paths) (strategyScope : String)
     (commits : Array String) : IO PersistedState := do
   if commits.size < 2 then
     throw <| IO.userError "bisect mode requires at least 2 commits"
@@ -313,7 +318,7 @@ private def mkInitialBisectState (paths : Paths) (strategyName : String)
   }
   return {
     projectDir := paths.projectDir
-    strategyName := strategyName
+    strategyScope := strategyScope
     items := commits
     runMode := .bisect
     bisect := some bisect
@@ -340,8 +345,8 @@ def loadInitialState (paths : Paths) (config : Config)
   match ← State.load? paths with
   | none =>
       match config.runMode with
-      | .linear => mkInitialAdvanceState paths config.strategy.name commits
-      | .bisect => mkInitialBisectState paths config.strategy.name commits
+      | .linear => mkInitialAdvanceState paths config.strategy.scope commits
+      | .bisect => mkInitialBisectState paths config.strategy.scope commits
   | some state =>
       if state.schemaVersion != currentSchemaVersion then
         throw <| IO.userError
@@ -352,7 +357,7 @@ def loadInitialState (paths : Paths) (config : Config)
       if state.projectDir != paths.projectDir then
         throw <| IO.userError
           "stored project directory does not match this checkout; delete .lake/hopscotch/ to start over"
-      if state.strategyName != config.strategy.name then
+      if state.strategyScope != config.strategy.scope then
         throw <| IO.userError
           "strategy changed since the last run; delete .lake/hopscotch/ to start over"
       if state.runMode != config.runMode then

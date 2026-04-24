@@ -15,13 +15,15 @@ def depUsage : String :=
   "usage: hopscotch dep <dependency-name> " ++
   "[--commits-file PATH | --to REF [--from REF]] " ++
   "[--git-url URL] [--project-dir DIR] [--quiet] [--allow-dirty-workspace] " ++
-  "[--keep-last-good] [--scan-mode [linear|bisect]] [--config-file PATH]"
+  "[--keep-last-good] [--scan-mode [linear|bisect]] [--results-json PATH] " ++
+  "[--config-file PATH]"
 
 /-- Shared usage text for `hopscotch toolchain`. -/
 def toolchainUsage : String :=
   "usage: hopscotch toolchain --toolchains-file PATH " ++
   "[--project-dir DIR] [--quiet] [--allow-dirty-workspace] " ++
-  "[--keep-last-good] [--scan-mode [linear|bisect]] [--config-file PATH]"
+  "[--keep-last-good] [--scan-mode [linear|bisect]] [--results-json PATH] " ++
+  "[--config-file PATH]"
 
 def helpText : String :=
   "hopscotch — binary-search or linearly scan dependency commits to find a regression\n\n" ++
@@ -76,6 +78,7 @@ private structure DepParseState where
   quiet : Bool := false
   allowDirtyWorkspace : Option Bool := none
   keepLastGood : Option Bool := none
+  resultsJsonPath : Option System.FilePath := none
 
 private def parseDepOptions (state : DepParseState) (args : List String) : IO DepParseState := do
   match args with
@@ -93,6 +96,8 @@ private def parseDepOptions (state : DepParseState) (args : List String) : IO De
       parseDepOptions { state with gitUrl := some url } rest
   | "--project-dir" :: projectDir :: rest =>
       parseDepOptions { state with projectDir := some (System.FilePath.mk projectDir) } rest
+  | "--results-json" :: path :: rest =>
+      parseDepOptions { state with resultsJsonPath := some (System.FilePath.mk path) } rest
   | "--quiet" :: rest =>
       parseDepOptions { state with quiet := true } rest
   | "--allow-dirty-workspace" :: rest =>
@@ -139,6 +144,7 @@ private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
     quiet := state.quiet
     allowDirtyWorkspace := allowDirtyWorkspace
     keepLastGood := keepLastGood
+    resultsJsonPath := state.resultsJsonPath
     strategy := Runner.lakefileStrategy state.dependencyName "lake"
   }
 
@@ -161,6 +167,7 @@ private structure ToolchainParseState where
   quiet : Bool := false
   allowDirtyWorkspace : Bool := false
   keepLastGood : Bool := false
+  resultsJsonPath : Option System.FilePath := none
   configFile : Option System.FilePath := none
 
 private def parseToolchainOptions (state : ToolchainParseState)
@@ -174,6 +181,8 @@ private def parseToolchainOptions (state : ToolchainParseState)
       parseToolchainOptions { state with toolchainsFile := some (System.FilePath.mk path) } rest
   | "--project-dir" :: projectDir :: rest =>
       parseToolchainOptions { state with projectDir := some (System.FilePath.mk projectDir) } rest
+  | "--results-json" :: path :: rest =>
+      parseToolchainOptions { state with resultsJsonPath := some (System.FilePath.mk path) } rest
   | "--quiet" :: rest =>
       parseToolchainOptions { state with quiet := true } rest
   | "--allow-dirty-workspace" :: rest =>
@@ -201,6 +210,7 @@ private def buildToolchainConfig (state : ToolchainParseState) : IO Runner.Confi
     quiet := state.quiet
     allowDirtyWorkspace := state.allowDirtyWorkspace
     keepLastGood := state.keepLastGood
+    resultsJsonPath := state.resultsJsonPath
     strategy := Runner.toolchainStrategy "lake"
   }
 

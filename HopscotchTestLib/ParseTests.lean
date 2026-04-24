@@ -31,7 +31,7 @@ private def «dep range source» : IO Unit := do
   | .range (some "def") (some "abc") none => pure ()
   | other => fail s!"expected range source, got {repr other}"
   assertEq .bisect config.runMode "should default to bisect mode"
-  assertEq "mathlib" config.strategy.name "strategy scope should be dep name"
+  assertEq "mathlib" config.strategy.scope "strategy scope should be dep name"
   assertEq false config.quiet "should default to quiet=false"
   assertEq false config.allowDirtyWorkspace "should default to allowDirtyWorkspace=false"
 
@@ -41,7 +41,7 @@ private def «dep file source» : IO Unit := do
   match config.itemSource with
   | .file path => assertEq "/p/commits.txt" path.toString "file path should match"
   | other => fail s!"expected file source, got {repr other}"
-  assertEq "batteries" config.strategy.name "strategy scope should be dep name"
+  assertEq "batteries" config.strategy.scope "strategy scope should be dep name"
 
 /-- Scenario: `dep` with `--scan-mode bisect` sets bisect mode. -/
 private def «dep scan mode bisect» : IO Unit := do
@@ -158,7 +158,7 @@ private def «toolchain file source» : IO Unit := do
   | .file path => assertEq "/p/toolchains.txt" path.toString "file path should match"
   | other => fail s!"expected file source, got {repr other}"
   assertEq .bisect config.runMode "should default to bisect mode"
-  assertEq "toolchain" config.strategy.name "strategy scope should be 'toolchain'"
+  assertEq "toolchain" config.strategy.scope "strategy scope should be 'toolchain'"
   assertEq false config.quiet "should default to quiet=false"
 
 /-- Scenario: `toolchain` with `--scan-mode bisect` sets bisect mode. -/
