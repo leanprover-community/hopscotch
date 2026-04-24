@@ -11,15 +11,15 @@ open Lean
 High-level progress of one local stepping session.
 
 - `running`: a probe is in progress or the next one is queued.
-- `failed`: a probe step returned a non-zero exit code (or a git check blocked a
+- `stopped`: a probe step returned a non-zero exit code (or a git check blocked a
   dirty workspace). Terminal for bisect; resumable in linear mode after the user fixes
   the failing commit.
-- `completed`: all commits passed (linear mode only). Terminal.
+- `fullySuccessful`: all commits passed (linear mode only). Terminal.
 -/
 inductive RunStatus where
   | running
-  | failed
-  | completed
+  | stopped
+  | fullySuccessful
   deriving Repr, Inhabited, BEq, DecidableEq, ToJson, FromJson
 
 /-- The execution strategy for one persisted runner session. -/
@@ -63,7 +63,7 @@ Extra search-window metadata for automated bisect sessions.
 
 Invariant (maintained by the state machine):
 - `knownGoodIndex < knownBadIndex` while the search is running.
-- `knownBadIndex == knownGoodIndex + 1` when the session reaches `Failed`,
+- `knownBadIndex == knownGoodIndex + 1` when the session reaches `Stopped`,
   meaning `items[knownBadIndex]` is the first failing commit.
 - `verifiedBad` becomes `true` after `items[knownBadIndex]` is probed and
   confirmed to fail; the binary search loop does not start until then.

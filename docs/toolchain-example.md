@@ -54,7 +54,7 @@ Then rerun the same command. `hopscotch` retries the failed toolchain and contin
 [3/5] leanprover/lean4:v4.16.0           write lean-toolchain … ok  lake build … ok   ← now passes
 [4/5] leanprover/lean4:nightly-2025-03-01  write lean-toolchain … ok  lake build … ok
 [5/5] leanprover/lean4:nightly-2025-03-15  write lean-toolchain … ok  lake build … ok
-Status: completed
+Status: fullySuccessful
 ```
 
 Repeat steps 3–4 for each failure until the full list passes.

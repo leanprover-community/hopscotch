@@ -39,22 +39,22 @@ def summaryText (state : PersistedState) : String :=
   let modeLine := s!"Mode: {runModeLabel state.runMode}"
   let statusLines :=
     match state.status with
-    | .completed =>
+    | .fullySuccessful =>
         match state.runMode with
         | .linear =>
             match state.lastSuccessfulCommit with
-            | some commit => [s!"Status: completed", modeLine, s!"Last successful commit: {commit}"]
-            | none => [s!"Status: completed", modeLine]
+            | some commit => [s!"Status: fullySuccessful", modeLine, s!"Last successful commit: {commit}"]
+            | none => [s!"Status: fullySuccessful", modeLine]
         | .bisect =>
             let last := state.lastSuccessfulCommit.getD "unknown"
-            [ s!"Status: completed", modeLine,
+            [ s!"Status: fullySuccessful", modeLine,
               "All commits passed — no culprit found.",
               s!"Last passing commit: {last}" ]
-    | .failed =>
+    | .stopped =>
         match state.runMode with
         | .linear =>
             [
-              "Status: failed",
+              "Status: stopped",
               modeLine,
               s!"First failing commit: {state.currentCommit.getD "unknown"}",
               failureStageLine state.stage,
@@ -62,7 +62,7 @@ def summaryText (state : PersistedState) : String :=
             ]
         | .bisect =>
             [
-              "Status: failed",
+              "Status: stopped",
               modeLine,
               s!"First failing commit: {state.currentCommit.getD "unknown"}",
               s!"Previous known good commit: {bisectKnownGoodCommit state}",

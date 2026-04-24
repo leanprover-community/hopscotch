@@ -16,7 +16,7 @@ cleanly resumed without re-running work that already succeeded.
 
 | Field           | Meaning                                                                |
 |-----------------|------------------------------------------------------------------------|
-| `status`        | Coarse phase: `running`, `failed`, or `completed`                      |
+| `status`        | Coarse phase: `running`, `stopped`, or `fullySuccessful`                      |
 | `runMode`       | Execution strategy: `linear` or `bisect` (binary search)    |
 | `stage`         | Within-probe step: `bump`, `build`, or `gitCheck`; `none` = between   |
 | `nextIndex`     | Index into `items` of the commit currently being (or next to be) probed |
@@ -94,8 +94,8 @@ every transition. On the next invocation `loadInitialState` reads that snapshot 
 - `stage` is set: the probe for `currentCommit` was interrupted mid-step; skip
   completed steps and restart from `stage`.
 - `stage` is `none`, `status` is `running`: between probes; start the next commit.
-- `status` is `failed`: already resolved; return the stored summary immediately.
-- `status` is `completed`: linear mode finished all commits; return immediately.
+- `status` is `stopped`: already resolved; return the stored summary immediately.
+- `status` is `fullySuccessful`: linear mode finished all commits; return immediately.
 -/
 
 namespace Hopscotch.Runner
@@ -198,7 +198,7 @@ def buildFailureState (base : PersistedState) (index : Nat) (commit : String)
   { base with
     nextIndex := index
     currentCommit := some commit
-    status := .failed
+    status := .stopped
     stage := some stage
     lastLogPath := some logPath
   }
@@ -217,7 +217,7 @@ def advanceAfterSuccess (base : PersistedState) (commits : Array String) (index 
     nextIndex := nextIndex
     currentCommit := nextCommit
     lastSuccessfulCommit := some commit
-    status := if nextIndex == commits.size then .completed else .running
+    status := if nextIndex == commits.size then .fullySuccessful else .running
     stage := none
     lastLogPath := none
   }
@@ -259,7 +259,7 @@ def buildBisectResolvedState (base : PersistedState) (commits : Array String)
     nextIndex := badIndex
     currentCommit := some badCommit
     lastSuccessfulCommit := commits[bisect.knownGoodIndex]?
-    status := .failed
+    status := .stopped
     stage := failure.stage
     lastLogPath := failure.logPath
   }
@@ -279,7 +279,7 @@ def buildBisectAllPassState (base : PersistedState) (bisect : BisectState)
     nextIndex            := bisect.knownBadIndex
     currentCommit        := none
     lastSuccessfulCommit := some topCommit
-    status               := .completed
+    status               := .fullySuccessful
     stage                := none
     lastLogPath          := none
   }
@@ -380,7 +380,7 @@ Assert the structural invariants of a persisted linear-mode state.
 Checks:
 - Commit list is non-empty and `bisect` is absent.
 - `nextIndex` is in range.
-- `currentCommit` matches `commits[nextIndex]` whenever the status is `running` or `failed`.
+- `currentCommit` matches `commits[nextIndex]` whenever the status is `running` or `stopped`.
 -/
 private def validateLinearState (state : PersistedState) (commits : Array String) : IO Unit := do
   if commits.isEmpty then
@@ -391,10 +391,10 @@ private def validateLinearState (state : PersistedState) (commits : Array String
     throw <| IO.userError "stored state has an invalid nextIndex"
   match commits[state.nextIndex]? with
   | none =>
-      if state.status != .completed then
+      if state.status != .fullySuccessful then
         throw <| IO.userError "stored state points past the end of the commit list"
   | some commit =>
-      if state.status == .failed || state.status == .running then
+      if state.status == .stopped || state.status == .running then
         if state.currentCommit != some commit then
           throw <| IO.userError "stored currentCommit does not match nextIndex"
 
@@ -402,14 +402,14 @@ private def validateLinearState (state : PersistedState) (commits : Array String
 Assert the structural invariants of a persisted bisect-mode state.
 
 Checks all three reachable statuses against the bisect diagram:
-- `failed`: bounds must be exactly adjacent (`knownBadIndex == knownGoodIndex + 1`)
+- `stopped`: bounds must be exactly adjacent (`knownBadIndex == knownGoodIndex + 1`)
   and `nextIndex`/`currentCommit` must point at `knownBadIndex`.
 - `running`: `nextIndex` must equal the expected probe index, which is determined by
   the stage of the loop:
     - `stage` is set → mid-step resume; `nextIndex` was already written.
     - `verifiedBad` is false → still verifying the bad endpoint; expect `knownBadIndex`.
     - Otherwise → normal midpoint; expect `nextBisectProbeIndex?`.
-- `completed`: never valid in bisect mode (the loop always ends in `failed`).
+- `fullySuccessful`: never valid in bisect mode (the loop always ends in `stopped`).
 -/
 private def validateBisectState (state : PersistedState) (commits : Array String) : IO Unit := do
   let some bisect := state.bisect
@@ -424,10 +424,10 @@ private def validateBisectState (state : PersistedState) (commits : Array String
     throw <| IO.userError "stored bisect bounds are invalid"
   let bounds := bisectBounds bisect
   match state.status with
-  | .completed =>
+  | .fullySuccessful =>
       if state.lastSuccessfulCommit.isNone then
         throw <| IO.userError "stored bisect all-pass state is missing lastSuccessfulCommit"
-  | .failed =>
+  | .stopped =>
       if bisect.knownBadIndex != bisect.knownGoodIndex + 1 then
         throw <| IO.userError "stored bisect failure is missing an exact boundary"
       if state.nextIndex != bisect.knownBadIndex then

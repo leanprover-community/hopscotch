@@ -17,7 +17,7 @@ private def mkPathsUnchecked (projectDir : System.FilePath) : Paths :=
     logsDir := stateRoot / "logs"
     culpritLogsDir := stateRoot / "logs" / "culprit" }
 
-/-- Scenario: a completed linear run produces a status=completed results payload with exitCode=0. -/
+/-- Scenario: a completed linear run produces a status=fullySuccessful results payload with exitCode=0. -/
 private def «results.json for completed linear run» : IO Unit := do
   let paths := mkPathsUnchecked "/tmp/demo"
   let state : PersistedState := {
@@ -29,24 +29,24 @@ private def «results.json for completed linear run» : IO Unit := do
     nextIndex := 2
     currentCommit := none
     lastSuccessfulCommit := some "good2"
-    status := .completed
+    status := .fullySuccessful
     stage := none
     lastLogPath := none
     updatedAt := "2026-04-24T00:00:00Z"
   }
   let r := fromState paths state
   assertEq resultsSchemaVersion r.schemaVersion "schema version should be exposed"
-  assertEq "completed" r.status "completed status should serialize"
+  assertEq "fullySuccessful" r.status "fullySuccessful status should serialize"
   assertEq "linear" r.mode "linear mode should serialize"
-  assertEq 0 r.exitCode "completed runs should have exit code 0"
+  assertEq 0 r.exitCode "fullySuccessful runs should have exit code 0"
   assertEq (none : Option String) r.firstFailingCommit
-    "completed runs should have no firstFailingCommit"
+    "fullySuccessful runs should have no firstFailingCommit"
   assertEq (some "good2") r.lastSuccessfulCommit
-    "completed runs should expose the last successful commit"
+    "fullySuccessful runs should expose the last successful commit"
   assertEq (none : Option String) r.failureStage
-    "completed runs should have no failure stage"
+    "fullySuccessful runs should have no failure stage"
   assertEq (none : Option String) r.culpritLogPath
-    "completed runs should have no culprit log path"
+    "fullySuccessful runs should have no culprit log path"
   assertEq (none : Option BisectJson) r.bisect
     "linear runs should have no bisect field"
 
@@ -62,13 +62,13 @@ private def «results.json for failed linear run» : IO Unit := do
     nextIndex := 1
     currentCommit := some "bad2"
     lastSuccessfulCommit := some "good1"
-    status := .failed
+    status := .stopped
     stage := some RunStage.build
     lastLogPath := some "/tmp/demo/.lake/hopscotch/logs/1-bad2-build.log"
     updatedAt := "2026-04-24T00:00:00Z"
   }
   let r := fromState paths state
-  assertEq "failed" r.status "failed status should serialize"
+  assertEq "stopped" r.status "failed status should serialize"
   assertEq 1 r.exitCode "failed runs should have exit code 1"
   assertEq (some "bad2") r.firstFailingCommit
     "failed runs should expose currentCommit as firstFailingCommit"
@@ -91,7 +91,7 @@ private def «results.json git-check failure» : IO Unit := do
     nextIndex := 1
     currentCommit := some "bad2"
     lastSuccessfulCommit := some "good1"
-    status := .failed
+    status := .stopped
     stage := some RunStage.gitCheck
     lastLogPath := some "/tmp/demo/.lake/hopscotch/logs/1-bad2-build.log"
     updatedAt := "2026-04-24T00:00:00Z"
@@ -133,7 +133,7 @@ private def «results.json for bisect resolved» : IO Unit := do
     nextIndex := 4
     currentCommit := some "bad4"
     lastSuccessfulCommit := some "mid3"
-    status := .failed
+    status := .stopped
     stage := some RunStage.build
     lastLogPath := some "/tmp/demo/.lake/hopscotch/logs/0-4-bad4-build.log"
     updatedAt := "2026-04-24T00:00:00Z"
@@ -184,7 +184,7 @@ private def «results.json bisect good endpoint assumed» : IO Unit := do
     nextIndex := 1
     currentCommit := some "bad1"
     lastSuccessfulCommit := none
-    status := .failed
+    status := .stopped
     stage := some RunStage.build
     lastLogPath := some "/tmp/demo/.lake/hopscotch/logs/0-1-bad1-build.log"
     updatedAt := "2026-04-24T00:00:00Z"
@@ -209,7 +209,7 @@ private def «writeResults writes both paths» : IO Unit := do
       nextIndex := 1
       currentCommit := some "c1"
       lastSuccessfulCommit := some "c0"
-      status := .failed
+      status := .stopped
       stage := some RunStage.build
       lastLogPath := some (paths.logsDir / "1-c1-build.log").toString
       updatedAt := "2026-04-24T00:00:00Z"
@@ -221,7 +221,7 @@ private def «writeResults writes both paths» : IO Unit := do
     let external ← IO.FS.readFile extraPath
     assertEq internal external "internal and external copies should be byte-identical"
     let parsed ← readJsonFile (α := ResultsJson) paths.resultsPath
-    assertEq "failed" parsed.status "round-tripped results should preserve status"
+    assertEq "stopped" parsed.status "round-tripped results should preserve status"
     assertEq (some "c1") parsed.firstFailingCommit
       "round-tripped results should preserve firstFailingCommit"
 
@@ -239,7 +239,7 @@ private def «writeResults without extra path» : IO Unit := do
       nextIndex := 1
       currentCommit := none
       lastSuccessfulCommit := some "c0"
-      status := .completed
+      status := .fullySuccessful
       stage := none
       lastLogPath := none
       updatedAt := "2026-04-24T00:00:00Z"

@@ -63,7 +63,7 @@ private def «stop at first build failure» : IO Unit := do
     -- Assert the runner records the failing build state and leaves the failing rev pinned.
     assertEq 1 result.exitCode "runner should stop at the first failing build"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.failed) state.status "state should record failure"
+    assertEq (.stopped) state.status "state should record failure"
     assertEq (some "badbuild") state.currentCommit "state should record the failing commit"
     assertEq (some RunStage.build) state.stage "state should record the failing stage"
     let lakefile := (← IO.FS.readFile (projectDir / "lakefile.toml"))
@@ -77,7 +77,7 @@ private def «stop at first build failure» : IO Unit := do
     let resultsPath := projectDir / ".lake" / "hopscotch" / "results.json"
     assertTrue (← resultsPath.pathExists) "results.json should be written on failure"
     let results ← readJsonFile (α := Hopscotch.Results.ResultsJson) resultsPath
-    assertEq "failed" results.status "results.json should record the failed status"
+    assertEq "stopped" results.status "results.json should record the stopped status"
     assertEq 1 results.exitCode "results.json should record exit code 1"
     assertEq (some "badbuild") results.firstFailingCommit
       "results.json should expose firstFailingCommit"
@@ -140,7 +140,7 @@ private def «resume from failed commit and complete» : IO Unit := do
     -- Assert the resumed run completes and retries the failed commit before advancing.
     assertEq 0 secondResult.exitCode "second run should resume and finish"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.completed) state.status "state should record completion after resume"
+    assertEq (.fullySuccessful) state.status "state should record completion after resume"
     assertEq (some "good2") state.lastSuccessfulCommit
       "resume should continue from the previously failing commit"
     let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
@@ -197,7 +197,7 @@ private def «complete all-success run» : IO Unit := do
     -- Assert the successful run completes and leaves the final rev pinned.
     assertEq 0 result.exitCode "all-success runs should succeed"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.completed) state.status "state should record completion"
+    assertEq (.fullySuccessful) state.status "state should record completion"
     assertEq (some "good2") state.lastSuccessfulCommit
       "last successful commit should be the final commit"
     let lakefile := (← IO.FS.readFile (projectDir / "lakefile.toml"))
@@ -272,7 +272,7 @@ private def «bisect probes expected commits» : IO Unit := do
 
     assertEq 1 result.exitCode "bisect should exit with failure after resolving the culprit"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.failed) state.status "bisect should finish with a failed boundary result"
+    assertEq (.stopped) state.status "bisect should finish with a failed boundary result"
     assertEq (some "badbuild4") state.currentCommit "bisect should resolve the exact failing commit"
     assertEq (some "good3") state.lastSuccessfulCommit
       "bisect should retain the previous known-good commit"
@@ -445,8 +445,8 @@ private def «bisect all-pass with keep-last-good» : IO Unit := do
     assertTrue (lakefile.contains "rev = \"good3\"")
       "lakefile should be pinned to the last (top) commit"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.completed) state.status
-      "state should be completed"
+    assertEq (.fullySuccessful) state.status
+      "state should be fullySuccessful"
     assertEq (some "good3") state.lastSuccessfulCommit
       "lastSuccessfulCommit should be the top commit"
     assertContains "no culprit found" result.summary
@@ -536,12 +536,12 @@ private def «bisect allow dirty workspace is accepted» : IO Unit := do
     assertEq 1 result.exitCode
       "bisect with --allow-dirty-workspace should resolve the boundary, not error on the flag combination"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.failed) state.status "bisect should record the resolved boundary"
+    assertEq (.stopped) state.status "bisect should record the resolved boundary"
     assertEq (some "badbuild1") state.currentCommit "bisect should identify the failing commit"
 
 /-- Scenario: re-running after a completed session returns 0 immediately without invoking
     the build tool again, making completed runs safely idempotent. -/
-private def «completed session returns immediately without re-executing» : IO Unit := do
+private def «fullySuccessful session returns immediately without re-executing» : IO Unit := do
   withTempDir "hopscotch-completed-rerun" fun dir => do
     -- Prepare: run to completion.
     let projectDir := dir / "downstream"
@@ -771,7 +771,7 @@ def suite : TestSuite := #[
   test_case «reject mode switch on resume»,
   test_case «reject changed bisect commit list on resume»,
   test_case «bisect allow dirty workspace is accepted»,
-  test_case «completed session returns immediately without re-executing»,
+  test_case «fullySuccessful session returns immediately without re-executing»,
   test_case «missing lakefile is rejected with a clear error»,
   test_case «resume with stale schema version is rejected»,
   test_case «range mode rejects a non-GitHub git URL»,

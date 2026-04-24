@@ -125,7 +125,7 @@ Drive the linear-mode state machine to completion or first failure.
 Loads (or creates) the initial state, then iterates `runProbe` over the commit list
 from `nextIndex` onward. Each successful probe calls `advanceAfterSuccess`; a failing
 probe calls `buildFailureState` and returns immediately. The session is also returned
-immediately when the stored status is already `completed`.
+immediately when the stored status is already `fullySuccessful`.
 
 On resume after a previously-failed commit, a git cleanliness check is performed
 before advancing past that commit (unless `--allow-dirty-workspace` was passed).
@@ -133,16 +133,16 @@ before advancing past that commit (unless `--allow-dirty-workspace` was passed).
 private def runAdvance (config : Config) (paths : Paths) (commits : Array String)
     (emit : ConsoleStyle → String → IO Unit) : IO RunResult := do
   let mut state ← loadInitialState paths config commits
-  let resumedFailedCommit := state.status == .failed
+  let resumedFailedCommit := state.status == .stopped
   let resumeIndex := state.nextIndex
   validateState state commits
-  if state.status == .completed then
+  if state.status == .fullySuccessful then
     let summary ← writeSummary paths state
     Results.writeResults paths config.resultsJsonPath state
     return { exitCode := 0, summary := summary, summaryPath := paths.summaryPath }
 
   -- `lastSummary` captures the most recent summary written by `saveState`.
-  -- It is always set before the loop exits normally (status → completed).
+  -- It is always set before the loop exits with (status → fullySuccessful).
   let mut lastSummary : String := ""
   for index in [state.nextIndex:commits.size] do
     let commit := commits[index]!
@@ -199,11 +199,11 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
     (emit : ConsoleStyle → String → IO Unit) : IO RunResult := do
   let state ← loadInitialState paths config commits
   validateState state commits
-  if state.status == .completed then
+  if state.status == .fullySuccessful then
     let summary ← writeSummary paths state
     Results.writeResults paths config.resultsJsonPath state
     return { exitCode := 0, summary := summary, summaryPath := paths.summaryPath }
-  if state.status == .failed then
+  if state.status == .stopped then
     let summary ← writeSummary paths state
     Results.writeResults paths config.resultsJsonPath state
     return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }

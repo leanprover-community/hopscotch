@@ -69,8 +69,8 @@ structure ResultsJson where
 /-- Public label for a `RunStatus`. -/
 private def statusLabel : RunStatus → String
   | .running   => "running"
-  | .failed    => "failed"
-  | .completed => "completed"
+  | .stopped    => "stopped"
+  | .fullySuccessful => "fullySuccessful"
 
 /-- Public label for a `RunMode`. -/
 private def modeLabel : RunMode → String
@@ -110,16 +110,16 @@ private def toBisectJson (items : Array String) (b : BisectState) : BisectJson :
 /-- Pure derivation of the `results.json` payload from the persisted state. -/
 def fromState (paths : Paths) (state : PersistedState) : ResultsJson :=
   let exitCode : Nat := match state.status with
-    | .failed => 1
+    | .stopped => 1
     | _       => 0
   let firstFailingCommit : Option String := match state.status with
-    | .failed => state.currentCommit
+    | .stopped => state.currentCommit
     | _       => none
   let failureStage : Option String := match state.status with
-    | .failed => state.stage.map stageLabel
+    | .stopped => state.stage.map stageLabel
     | _       => none
   let culpritLogPath : Option String := match state.status, state.lastLogPath with
-    | .failed, some lp =>
+    | .stopped, some lp =>
         let fileName := lp.fileName.getD lp.toString
         some ((paths.culpritLogsDir / fileName).toString)
     | _, _ => none

@@ -33,8 +33,8 @@
     },
     "status": {
       "type": "string",
-      "enum": ["running", "failed", "completed"],
-      "description": "Coarse run phase. `running` = a probe is in progress or queued. `failed` = the search found a failing commit (or a git-cleanliness check blocked resume). `completed` = every commit passed (linear mode, or bisect with --keep-last-good and an all-good range)."
+      "enum": ["running", "stopped", "fullySuccessful"],
+      "description": "Coarse run phase. `running` = a probe is in progress or queued. `stopped` = the search found a failing commit (or a git-cleanliness check blocked resume). `fullySuccessful` = every commit passed (linear mode, or bisect with --keep-last-good and an all-good range)."
     },
     "mode": {
       "type": "string",
@@ -44,7 +44,7 @@
     "exitCode": {
       "type": "integer",
       "enum": [0, 1],
-      "description": "Exit code the CLI would return for this state: 1 when `status = failed`, 0 otherwise. (The `2` tool-error code is never written here — a tool error aborts before a state transition.)"
+      "description": "Exit code the CLI would return for this state: 1 when `status = stopped`, 0 otherwise. (The `2` tool-error code is never written here — a tool error aborts before a state transition.)"
     },
     "strategyScope": {
       "type": "string",
@@ -61,7 +61,7 @@
     },
     "firstFailingCommit": {
       "type": ["string", "null"],
-      "description": "The first failing commit when `status = failed`; `null` otherwise. In bisect mode this equals `items[bisect.knownBadIndex]`."
+      "description": "The first failing commit when `status = stopped`; `null` otherwise. In bisect mode this equals `items[bisect.knownBadIndex]`."
     },
     "lastSuccessfulCommit": {
       "type": ["string", "null"],
@@ -69,21 +69,21 @@
     },
     "currentCommit": {
       "type": ["string", "null"],
-      "description": "The commit the run is currently positioned at. While `status = running` this is the next commit to probe; when `failed`, the failing commit; when `completed`, typically `null`."
+      "description": "The commit the run is currently positioned at. While `status = running` this is the next commit to probe; when `stopped`, the failing commit; when `fullySuccessful`, typically `null`."
     },
     "failureStage": {
       "type": ["string", "null"],
       "enum": [null, "lake update", "lake build", "git cleanliness check"],
-      "description": "Which step of the probe failed, when `status = failed`. `lake update` = the bump step (rewrite lakefile/toolchain + `lake update`). `lake build` = a verify step. `git cleanliness check` = resume was blocked because the working tree is dirty after a fix (linear mode only)."
+      "description": "Which step of the probe failed, when `status = stopped`. `lake update` = the bump step (rewrite lakefile/toolchain + `lake update`). `lake build` = a verify step. `git cleanliness check` = resume was blocked because the working tree is dirty after a fix (linear mode only)."
     },
     "nextIndex": {
       "type": "integer",
       "minimum": 0,
-      "description": "Index into `items` the runner is currently positioned at. After a completed linear run this equals `items.length`. In bisect failed state it equals `bisect.knownBadIndex`."
+      "description": "Index into `items` the runner is currently positioned at. After a completed linear run this equals `items.length`. In bisect stopped state it equals `bisect.knownBadIndex`."
     },
     "culpritLogPath": {
       "type": ["string", "null"],
-      "description": "Absolute path to the failing log inside the culprit subdirectory (`.lake/hopscotch/logs/culprit/`). Populated iff `status = failed` and a log was written. The file has the same basename as `lastLogPath` — both point at the same content, but the `culprit/` copy is durable across resumes."
+      "description": "Absolute path to the failing log inside the culprit subdirectory (`.lake/hopscotch/logs/culprit/`). Populated iff `status = stopped` and a log was written. The file has the same basename as `lastLogPath` — both point at the same content, but the `culprit/` copy is durable across resumes."
     },
     "lastLogPath": {
       "type": ["string", "null"],
@@ -131,7 +131,7 @@
         "knownBadIndex": {
           "type": "integer",
           "minimum": 0,
-          "description": "Index of the known-bad endpoint. Starts at `items.length - 1` (range upper bound) and only decreases. When `status = failed` the window is adjacent: `knownBadIndex == knownGoodIndex + 1`."
+          "description": "Index of the known-bad endpoint. Starts at `items.length - 1` (range upper bound) and only decreases. When `status = stopped` the window is adjacent: `knownBadIndex == knownGoodIndex + 1`."
         },
         "knownGoodCommit": {
           "type": ["string", "null"],
@@ -190,7 +190,7 @@
   "examples": [
     {
       "schemaVersion": 1,
-      "status": "failed",
+      "status": "stopped",
       "mode": "bisect",
       "exitCode": 1,
       "strategyScope": "mathlib",

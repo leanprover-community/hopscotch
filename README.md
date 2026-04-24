@@ -108,7 +108,7 @@ Bisect mode requires this explicit restore step because it jumps around during t
 
 Pass `--keep-last-good` to pin to the **last passing commit** instead — useful when you want the project in a buildable state after the search (for example, to run the test suite or inspect the working build before tackling the fix). If the very first commit in the range fails, there is no known-good commit to restore to, so `--keep-last-good` has no effect in that case.
 
-`--keep-last-good` also changes bisect's behavior when the bad endpoint passes during initial validation (i.e. the entire range turns out to be good): instead of aborting with an error, hopscotch records the run as completed with no culprit and exits with code `0`. Without the flag, an error is raised with a hint to add `--keep-last-good`.
+`--keep-last-good` also changes bisect's behavior when the bad endpoint passes during initial validation (i.e. the entire range turns out to be good): instead of aborting with an error, hopscotch records the run as `fullySuccessful` (with no culprit) and exits with code `0`. Without the flag, an error is raised with a hint to add `--keep-last-good`.
 
 ### Git check and `--allow-dirty-workspace`
 
@@ -147,7 +147,7 @@ Pass `--allow-dirty-workspace` to override this too, if you know what you are do
 
 If `hopscotch` is interrupted at any point, rerunning the same command resumes from exactly where it left off without repeating completed steps.
 
-Each project directory holds **one active session at a time**. Once a session has `completed` or `failed`, `hopscotch` will not start a new run — it will just report the existing result. To test a different commit range, or to re-run from scratch, clear the session state with:
+Each project directory holds **one active session at a time**. Once a session has `fullySuccessful` or `stopped`, `hopscotch` will not start a new run — it will just report the existing result. To test a different commit range, or to re-run from scratch, clear the session state with:
 
 ```bash
 hopscotch clean --project-dir MyProject
@@ -316,7 +316,7 @@ For a step-by-step walkthrough, see [docs/toolchain-example.md](docs/toolchain-e
 hopscotch clean [--project-dir DIR]
 ```
 
-Deletes the `.lake/hopscotch/` state directory for the given project (default: current directory), allowing a fresh session to be started. Use this after a session has `completed` or `failed` and you want to test a different commit range or re-run from scratch.
+Deletes the `.lake/hopscotch/` state directory for the given project (default: current directory), allowing a fresh session to be started. Use this after a session has `fullySuccessful` or `stopped` and you want to test a different commit range or re-run from scratch.
 
 ```bash
 hopscotch clean --project-dir ./MyProject
@@ -328,4 +328,4 @@ If the state directory does not exist, `clean` exits cleanly with a message and 
 
 - `hopscotch` uses `elan run <toolchain> lake` so it always respects the downstream's pinned `lean-toolchain`, not its own.
 - Set `GITHUB_TOKEN` in your environment to increase GitHub API rate limits when fetching large commit ranges.
-- To start a new session after a completed or failed run, run `hopscotch clean [--project-dir DIR]`.
+- To start a new session after a fullySuccessful or failed run, run `hopscotch clean [--project-dir DIR]`.

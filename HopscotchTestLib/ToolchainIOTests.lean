@@ -39,7 +39,7 @@ private def «toolchain strategy steps through all-success toolchain list» : IO
     -- Assert: run completes and the final lean-toolchain matches the last entry.
     assertEq 0 result.exitCode "all-success toolchain run should succeed"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.completed) state.status "state should record completion"
+    assertEq (.fullySuccessful) state.status "state should record completion"
     assertEq (some "good1") state.lastSuccessfulCommit
       "last successful commit should be the final toolchain"
     let toolchain := (← IO.FS.readFile (projectDir / "lean-toolchain")).trimAscii.copy
@@ -70,7 +70,7 @@ private def «toolchain strategy stops at first build failure» : IO Unit := do
     -- Assert: runner stops at the failing toolchain.
     assertEq 1 result.exitCode "runner should stop at the first failing build"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.failed) state.status "state should record failure"
+    assertEq (.stopped) state.status "state should record failure"
     assertEq (some "badbuild1") state.currentCommit
       "state should record the failing toolchain"
     assertEq (some RunStage.build) state.stage
@@ -114,7 +114,7 @@ private def «toolchain strategy resume retries the failed toolchain before adva
     -- Assert: the resumed run completes by retrying badbuild1 first.
     assertEq 0 secondResult.exitCode "resumed run should complete"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.completed) state.status "state should record completion after resume"
+    assertEq (.fullySuccessful) state.status "state should record completion after resume"
     assertEq (some "good2") state.lastSuccessfulCommit
       "resume should complete with the final toolchain as the last success"
     let calls ← readToolchainLog projectDir
@@ -142,7 +142,7 @@ private def «toolchain strategy bisect resolves the boundary toolchain» : IO U
     -- Assert: bisect resolves badbuild2 as the first failing toolchain.
     assertEq 1 result.exitCode "bisect should exit with failure after resolving"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.failed) state.status "bisect should finish with a failed boundary result"
+    assertEq (.stopped) state.status "bisect should finish with a failed boundary result"
     assertEq (some "badbuild2") state.currentCommit
       "bisect should resolve the exact first failing toolchain"
     assertEq (some "good1") state.lastSuccessfulCommit

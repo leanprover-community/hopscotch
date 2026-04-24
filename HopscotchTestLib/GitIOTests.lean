@@ -56,7 +56,7 @@ private def «block dirty workspace after fix» : IO Unit := do
       "dirty fixes should block resume after the build starts passing"
 
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.failed) state.status "resume gate should persist as a normal failure"
+    assertEq (.stopped) state.status "resume gate should persist as a normal failure"
     assertEq (some RunStage.gitCheck) state.stage "dirty workspace should record the git-check stage"
     assertEq (some "badbuild") state.currentCommit "resume gate should keep the failing commit pinned"
     assertEq 1 state.nextIndex "resume gate should keep the same commit index"
@@ -96,7 +96,7 @@ private def «allow dirty workspace bypass» : IO Unit := do
     -- Assert: The build failed
     assertEq 1 result.exitCode "build should have failed"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.failed) state.status "build should have failed"
+    assertEq (.stopped) state.status "build should have failed"
 
     -- Prepare an uncommitted fix and a successful mock lake for the bypassed resume.
     IO.FS.writeFile (projectDir / "fix.txt") "working tree fix\n"
@@ -115,7 +115,7 @@ private def «allow dirty workspace bypass» : IO Unit := do
     -- Assert the dirty-workspace bypass allows the session to continue into later commits.
     assertEq 0 result.exitCode "allow-dirty-workspace should bypass the git cleanliness gate"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.completed) state.status "bypassed resumes should still complete normally"
+    assertEq (.fullySuccessful) state.status "bypassed resumes should still complete normally"
     let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
     assertEq ["update:badbuild", "build:badbuild", "update:good2", "build:good2"] calls
       "bypassed resumes should continue into later commits"
@@ -157,7 +157,7 @@ private def «respect ignored .lake state in git gate» : IO Unit := do
     -- Assert the ignored `.lake/` state does not block the resumed session.
     assertEq 0 result.exitCode "ignored .lake state should not block a cleanly committed fix"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.completed) state.status "committed fixes should let the session complete"
+    assertEq (.fullySuccessful) state.status "committed fixes should let the session complete"
 
 /-- Scenario: a fully clean git repo after the fix commit resumes normally. -/
 private def «resume with clean git repo» : IO Unit := do
@@ -279,7 +279,7 @@ private def «bisect allow dirty workspace bypass at session start» : IO Unit :
     assertEq 1 result.exitCode
       "bisect with --allow-dirty-workspace should bypass the dirty-worktree check and find the boundary"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.failed) state.status "bisect should resolve the boundary normally"
+    assertEq (.stopped) state.status "bisect should resolve the boundary normally"
     assertEq (some "badbuild") state.currentCommit "bisect should identify the failing commit"
 
 /-- Scenario: bisect warns and continues when git is unavailable instead of blocking. -/

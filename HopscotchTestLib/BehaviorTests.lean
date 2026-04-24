@@ -83,7 +83,7 @@ private def «summary display formatting» : IO Unit := do
     nextIndex := 1
     currentCommit := some "bad2"
     lastSuccessfulCommit := some "good1"
-    status := .failed
+    status := .stopped
     stage := some RunStage.build
     lastLogPath := some "/tmp/demo/.lake/hopscotch/logs/1-bad2-build.log"
     updatedAt := "2026-03-17T00:00:00Z"
@@ -93,7 +93,7 @@ private def «summary display formatting» : IO Unit := do
   let expectedPlain := makeMultiline [
     "# Summary",
     "",
-    "Status: failed",
+    "Status: stopped",
     "Mode: linear",
     "First failing commit: bad2",
     "Failure stage: lake build",
@@ -120,7 +120,7 @@ private def «summary git check formatting» : IO Unit := do
     nextIndex := 1
     currentCommit := some "bad2"
     lastSuccessfulCommit := some "good1"
-    status := .failed
+    status := .stopped
     stage := some RunStage.gitCheck
     lastLogPath := some "/tmp/demo/.lake/hopscotch/logs/1-bad2-build.log"
     updatedAt := "2026-03-17T00:00:00Z"
@@ -206,7 +206,7 @@ private def «bisect summary formatting» : IO Unit := do
     runningState with
       nextIndex := 4
       currentCommit := some "bad4"
-      status := .failed
+      status := .stopped
       stage := some .build
       lastLogPath := some "/tmp/demo/.lake/hopscotch/logs/0-4-bad4-build.log"
       bisect := some { bisect with knownGoodIndex := 3 }
