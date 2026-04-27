@@ -753,6 +753,30 @@ private def «linear keep last good pins last good commit» : IO Unit := do
     assertTrue (lakefile.contains "rev = \"good1\"")
       "linear with --keep-last-good should leave the lakefile pinned to the last good commit"
 
+/-- Scenario: when verify steps are stripped (the mechanism behind HOPSCOTCH_SKIP_BUILD),
+    commits that would fail the build succeed and no `lake build` calls are made. -/
+private def «skip build: build step not invoked» : IO Unit := do
+  withTempDir "hopscotch-skip-build" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    -- "badbuild" prefix would normally fail the build; its presence here proves the build was skipped.
+    IO.FS.writeFile commitListPath "good1\nbadbuild\ngood2\n"
+    configureMockLake projectDir "fail-build"
+    let baseStrategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := { baseStrategy with verify := #[] }
+      quiet := true
+    } ignoreOutput
+    assertEq 0 result.exitCode "runner should succeed when build step is skipped"
+    let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
+    assertEq (.fullySuccessful) state.status "all commits should pass with no verify step"
+    let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
+    assertTrue (calls.all (·.startsWith "update:"))
+      "only lake update calls should appear when the build step is skipped"
+
 def suite : TestSuite := #[
   test_case «downstream toolchain command resolution»,
   test_case «stop at first build failure»,
@@ -778,7 +802,8 @@ def suite : TestSuite := #[
   test_case «quiet := false does not suppress runner progress messages»,
   test_case «bisect default end state pins first bad commit»,
   test_case «bisect keep last good pins last good commit»,
-  test_case «linear keep last good pins last good commit»
+  test_case «linear keep last good pins last good commit»,
+  test_case «skip build: build step not invoked»
 ]
 
 end HopscotchTestLib.IOTests

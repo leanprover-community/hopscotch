@@ -137,6 +137,15 @@ private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
         if fromRef.isNone && gitUrl.isNone then
           throw <| IO.userError depUsage
         pure <| Runner.ItemSource.range none fromRef gitUrl
+  let baseStrategy := Runner.lakefileStrategy state.dependencyName "lake"
+  -- INTERNAL: HOPSCOTCH_SKIP_BUILD bypasses lake build entirely, leaving only the
+  -- lake update step. Intended for callers that handle build validation separately
+  -- (e.g. bump-to-latest action in update-only mode). Not part of the public CLI
+  -- interface and may be removed or changed without notice.
+  let strategy ←
+    match ← IO.getEnv "HOPSCOTCH_SKIP_BUILD" with
+    | some "true" => pure { baseStrategy with verify := #[] }
+    | _           => pure baseStrategy
   return {
     itemSource := itemSource
     projectDir := projectDir
@@ -145,7 +154,7 @@ private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
     allowDirtyWorkspace := allowDirtyWorkspace
     keepLastGood := keepLastGood
     resultsJsonPath := state.resultsJsonPath
-    strategy := Runner.lakefileStrategy state.dependencyName "lake"
+    strategy := strategy
   }
 
 private def parseDep (args : List String) : IO Runner.Config := do
