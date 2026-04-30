@@ -9,9 +9,14 @@ lean_lib Hopscotch
 
 lean_lib HopscotchTestLib
 
+lean_lib Lakedit
+
 @[default_target]
 lean_exe "hopscotch" where
   root := `Main
+
+lean_exe "lakedit" where
+  root := `Lakedit.Main
 
 lean_exe HopscotchTest where
   root := `HopscotchTest.Main

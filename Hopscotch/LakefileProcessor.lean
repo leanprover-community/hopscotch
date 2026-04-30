@@ -528,4 +528,93 @@ def rewriteAny (projectDir : System.FilePath) (depName : String) (rev : String) 
   else
     rewriteFile (projectDir / "lakefile.toml") depName rev
 
+/-! ## Path-source rewriting
+
+These functions rewrite a dependency to use a local `path = "..."` source
+(TOML) or `from "path"` source (Lean lakefile), dropping any existing git/rev
+fields. The user is responsible for the path value — it is passed through
+unchanged, since Lake interprets it relative to the requiring package.
+-/
+
+/--
+Rewrite the `[[require]]` block for `depName` to use a local `path = "..."` source.
+
+Drops any existing `git`, `rev`, `path`, or `source` fields and inserts
+`path = "..."` immediately after the `name` field (or at the end of the block
+when no `name` line is present). All other fields and comment lines are kept.
+-/
+def setPathContents (contents : String) (depName : String) (path : String) : Except String String := do
+  let newline := preferredNewline contents
+  let lines := (contents.splitOn newline).toArray
+  let blocks := findNamedRequireBlocks lines depName
+  if blocks.isEmpty then
+    throw s!"lakefile.toml does not contain a [[require]] block named '{depName}'"
+  if blocks.size > 1 then
+    throw s!"lakefile.toml contains multiple [[require]] blocks named '{depName}'"
+  let (blockStart, blockEnd) := blocks[0]!
+  let isSourceField (line : String) : Bool :=
+    (quotedAssignmentValue? "git" line).isSome ||
+    (quotedAssignmentValue? "rev" line).isSome ||
+    (quotedAssignmentValue? "path" line).isSome ||
+    line.trimAscii.startsWith "source ="
+  let blockLines := (lines.extract blockStart blockEnd).filter (fun line => !isSourceField line)
+  let pathLine := s!"path = \"{path}\""
+  let nameLineIdx := blockLines.findIdx? (fun line => (quotedAssignmentValue? "name" line).isSome)
+  let newBlockLines := match nameLineIdx with
+    | some idx => blockLines.toList.take (idx + 1) ++ [pathLine] ++ blockLines.toList.drop (idx + 1)
+    | none => blockLines.toList ++ [pathLine]
+  let newLines := lines.toList.take blockStart ++ newBlockLines ++ lines.toList.drop blockEnd
+  return String.intercalate newline newLines
+
+/-- Rewrite a dependency to use a local path inside a `lakefile.toml` on disk. -/
+def setPathFile (filePath : System.FilePath) (depName : String) (localPath : String) : IO Unit := do
+  let contents ← IO.FS.readFile filePath
+  let rewritten ← IO.ofExcept <| setPathContents contents depName localPath
+  IO.FS.writeFile filePath rewritten
+
+/--
+Rewrite the `require depName` block in a `lakefile.lean` to use a local
+`from "path"` source.
+
+Replaces the entire block (header + continuation lines) with a single-line
+`require <depName> from "<path>"`. Throws when the block is absent, when
+multiple blocks exist, or when a `with` clause is present (unsupported in v1).
+-/
+def setLeanPathContents (contents : String) (depName : String) (path : String)
+    : Except String String := do
+  let newline := preferredNewline contents
+  let lines := (contents.splitOn newline).toArray
+  let blocks := findLeanRequireBlocks lines depName
+  if blocks.isEmpty then
+    throw s!"lakefile.lean does not contain a require block named '{depName}'"
+  if blocks.size > 1 then
+    throw s!"lakefile.lean contains multiple require blocks named '{depName}'"
+  let (headerIdx, blockLines) := blocks[0]!
+  let blockText := String.intercalate " " blockLines.toList
+  if blockText.contains " with " then
+    throw s!"'{depName}' in lakefile.lean has a 'with' clause; manual editing required"
+  let newHeader := match depName.splitOn "/" with
+    | [scope, name] => s!"require \"{scope}\" / \"{name}\" from \"{path}\""
+    | _ => s!"require {depName} from \"{path}\""
+  let blockLen := blockLines.size
+  let newLines := lines.toList.take headerIdx ++ [newHeader] ++ lines.toList.drop (headerIdx + blockLen)
+  return String.intercalate newline newLines
+
+/-- Rewrite a dependency to use a local path inside a `lakefile.lean` on disk. -/
+def setLeanPathFile (filePath : System.FilePath) (depName : String) (localPath : String) : IO Unit := do
+  let contents ← IO.FS.readFile filePath
+  let rewritten ← IO.ofExcept <| setLeanPathContents contents depName localPath
+  IO.FS.writeFile filePath rewritten
+
+/--
+Rewrite the dependency `depName` to use a local path in whichever lakefile
+format the project uses. Prefers `lakefile.lean` when both exist (matching
+Lake's own resolution order).
+-/
+def setPathAny (projectDir : System.FilePath) (depName : String) (localPath : String) : IO Unit := do
+  if ← hasLakeLean projectDir then
+    setLeanPathFile (projectDir / "lakefile.lean") depName localPath
+  else
+    setPathFile (projectDir / "lakefile.toml") depName localPath
+
 end Hopscotch.LakefileProcessor

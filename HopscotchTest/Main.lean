@@ -3,6 +3,8 @@ import HopscotchTestLib.GitIOTests
 import HopscotchTestLib.IOTests
 import HopscotchTestLib.LakefileReadTests
 import HopscotchTestLib.LakefileLeanReadTests
+import HopscotchTestLib.LakefileSetPathTests
+import HopscotchTestLib.LakeditParseTests
 import HopscotchTestLib.ParseTests
 import HopscotchTestLib.ResultsTests
 import HopscotchTestLib.ToolchainIOTests
@@ -35,15 +37,17 @@ private def gitAvailable : IO Bool := do
 /-- Select the test suites to run, skipping git-specific tests when git is unavailable. -/
 def testSuitesToRun : IO (Array (String × TestSuite)) := do
   let baseSuites : Array (String × TestSuite) := #[
-    ("BehaviorTests",         BehaviorTests.suite),
-    ("ParseTests",            ParseTests.suite),
-    ("IOTests",               IOTests.suite),
-    ("LakefileReadTests",     LakefileReadTests.suite),
-    ("LakefileRewriting",     LakefileRewriting.suite),
-    ("LakefileLeanReadTests", LakefileLeanReadTests.suite),
-    ("ResultsTests",          ResultsTests.suite),
-    ("ToolchainIOTests",      ToolchainIOTests.suite),
-    ("UtilTests",             UtilTests.suite)
+    ("BehaviorTests",            BehaviorTests.suite),
+    ("ParseTests",               ParseTests.suite),
+    ("IOTests",                  IOTests.suite),
+    ("LakefileReadTests",        LakefileReadTests.suite),
+    ("LakefileRewriting",        LakefileRewriting.suite),
+    ("LakefileLeanReadTests",    LakefileLeanReadTests.suite),
+    ("LakefileSetPathTests",     LakefileSetPathTests.suite),
+    ("LakeditParseTests",        LakeditParseTests.suite),
+    ("ResultsTests",             ResultsTests.suite),
+    ("ToolchainIOTests",         ToolchainIOTests.suite),
+    ("UtilTests",                UtilTests.suite)
   ]
   if ← gitAvailable then
     pure (baseSuites.push ("GitIOTests", GitIOTests.suite))
