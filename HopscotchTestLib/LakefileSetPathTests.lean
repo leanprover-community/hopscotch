@@ -189,6 +189,28 @@ private def «setLeanPathContents throws on with clause» : IO Unit := do
   | .ok _ => fail "should throw when with clause is present"
   | .error _ => pure ()
 
+/-- A `"` in the path would close the TOML string early and produce broken output. -/
+private def «setPathContents rejects path containing a quote» : IO Unit := do
+  let base := makeMultiline [
+    "[[require]]",
+    "name = \"mathlib\"",
+    "git = \"https://example.com/m.git\"",
+    ""
+  ]
+  match LakefileProcessor.setPathContents base "mathlib" "/weird\"path" with
+  | .ok _ => fail "should reject a path containing a double quote"
+  | .error _ => pure ()
+
+/-- Same defense for the `lakefile.lean` path rewriter. -/
+private def «setLeanPathContents rejects path containing a quote» : IO Unit := do
+  let base := makeMultiline [
+    "require batteries from git \"https://example.com/b.git\" @ \"abc\"",
+    ""
+  ]
+  match LakefileProcessor.setLeanPathContents base "batteries" "/weird\"path" with
+  | .ok _ => fail "should reject a path containing a double quote"
+  | .error _ => pure ()
+
 def suite : TestSuite := #[
   test_case «setPathContents drops git and rev, inserts path»,
   test_case «setPathContents drops source line, inserts path»,
@@ -197,11 +219,13 @@ def suite : TestSuite := #[
   test_case «setPathContents preserves CRLF newlines»,
   test_case «setPathContents throws on missing dep»,
   test_case «setPathContents throws on duplicate blocks»,
+  test_case «setPathContents rejects path containing a quote»,
   test_case «setLeanPathContents rewrites single-line git dep»,
   test_case «setLeanPathContents rewrites scoped dep»,
   test_case «setLeanPathContents normalizes multi-line block to single line»,
   test_case «setLeanPathContents throws on missing require»,
-  test_case «setLeanPathContents throws on with clause»
+  test_case «setLeanPathContents throws on with clause»,
+  test_case «setLeanPathContents rejects path containing a quote»
 ]
 
 end HopscotchTestLib.LakefileSetPathTests

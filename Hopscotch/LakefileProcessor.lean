@@ -9,6 +9,17 @@ private def preferredNewline (contents : String) : String :=
   else if contents.contains "\r" then "\r"
   else "\n"
 
+/--
+Reject values that would break out of a quoted TOML/Lean string when spliced in.
+
+A bare `"`, `\`, or embedded newline would either produce invalid syntax or, worse,
+silently extend the value past its intended end. Valid git refs and filesystem paths
+never need these characters; rejecting them is simpler than escaping.
+-/
+private def validateQuotedValue (kind value : String) : Except String Unit := do
+  if value.any (fun c => c == '"' || c == '\\' || c == '\n' || c == '\r') then
+    throw s!"{kind} value contains an unsupported character (\", \\, or newline): {value}"
+
 /-- Detect one `[[require]]` section header after trimming indentation. -/
 private def isRequireHeader (line : String) : Bool :=
   line.trimAscii.copy == "[[require]]"
@@ -121,8 +132,18 @@ Rewrite the first `rev` line that appears after a matching dependency `name`, or
 a new `rev` entry at the end of the block when none exists.
 -/
 def rewriteContents (contents : String) (dependencyName : String) (rev : String) : Except String String := do
+  validateQuotedValue "rev" rev
   let newline := preferredNewline contents
   let lines := (contents.splitOn newline).toArray
+  -- Reject path-source blocks up front: Lake forbids combining `path` with `rev`,
+  -- so inserting one would produce a lakefile Lake refuses to load. (The Lean
+  -- variant has the equivalent check at the `from git` site below.)
+  let blocks := findNamedRequireBlocks lines dependencyName
+  if blocks.size = 1 then
+    let (blockStart, blockEnd) := blocks[0]!
+    if (lines.extract blockStart blockEnd).any
+        (fun line => (quotedAssignmentValue? "path" line).isSome) then
+      throw s!"'{dependencyName}' in lakefile.toml is not a git dependency; cannot pin a revision"
   match ← findDependencyRevLine lines dependencyName with
   | some revLineIndex =>
       let rewrittenLine ← rewriteRevLine lines[revLineIndex]! rev
@@ -426,6 +447,7 @@ a new `@ "rev"` annotation when the dependency has no existing revision.
 -/
 def rewriteLeanContents (contents : String) (depName : String) (rev : String)
     : Except String String := do
+  validateQuotedValue "rev" rev
   let newline := preferredNewline contents
   let lines := (contents.splitOn newline).toArray
   let blocks := findLeanRequireBlocks lines depName
@@ -544,6 +566,7 @@ Drops any existing `git`, `rev`, `path`, or `source` fields and inserts
 when no `name` line is present). All other fields and comment lines are kept.
 -/
 def setPathContents (contents : String) (depName : String) (path : String) : Except String String := do
+  validateQuotedValue "path" path
   let newline := preferredNewline contents
   let lines := (contents.splitOn newline).toArray
   let blocks := findNamedRequireBlocks lines depName
@@ -582,6 +605,7 @@ multiple blocks exist, or when a `with` clause is present (unsupported in v1).
 -/
 def setLeanPathContents (contents : String) (depName : String) (path : String)
     : Except String String := do
+  validateQuotedValue "path" path
   let newline := preferredNewline contents
   let lines := (contents.splitOn newline).toArray
   let blocks := findLeanRequireBlocks lines depName
