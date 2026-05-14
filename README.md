@@ -329,3 +329,7 @@ If the state directory does not exist, `clean` exits cleanly with a message and 
 - `hopscotch` uses `elan run <toolchain> lake` so it always respects the downstream's pinned `lean-toolchain`, not its own.
 - Set `GITHUB_TOKEN` in your environment to increase GitHub API rate limits when fetching large commit ranges.
 - To start a new session after a fullySuccessful or failed run, run `hopscotch clean [--project-dir DIR]`.
+
+## Companion: `lakedit`
+
+[`lakedit`](docs/lakedit.md) is a small CLI built in the same repo that rewrites a lakefile `require` block to point at a local path — useful for testing a local checkout before running a `hopscotch` session.

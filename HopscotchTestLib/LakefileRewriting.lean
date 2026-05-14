@@ -321,6 +321,43 @@ private def «lakefile dependency failed rev rewriting» : IO Unit := do
   assertTrue (rewrittenCrlf.contains crlf)
     "rewrite should preserve CRLF line endings"
 
+/-- Regression: `set --path` then `set --rev` on a TOML block used to silently
+emit both `path` and `rev`, producing a lakefile Lake refuses to load. -/
+private def «rewriteContents rejects rev on path-source block» : IO Unit := do
+  let pathSource := makeMultiline [
+    "[[require]]",
+    "name = \"mathlib\"",
+    "path = \"/local/mathlib\"",
+    ""
+  ]
+  match LakefileProcessor.rewriteContents pathSource "mathlib" "abc123" with
+  | .ok _ => fail "should refuse to pin a rev on a path-source dependency"
+  | .error _ => pure ()
+
+/-- A quote inside the rev would close the TOML string early and produce
+invalid output, so the rewriter must reject it. -/
+private def «rewriteContents rejects rev containing a quote» : IO Unit := do
+  let base := makeMultiline [
+    "[[require]]",
+    "name = \"mathlib\"",
+    "git = \"https://example.com/m.git\"",
+    "rev = \"old\"",
+    ""
+  ]
+  match LakefileProcessor.rewriteContents base "mathlib" "ab\"cd" with
+  | .ok _ => fail "should reject a rev containing a double quote"
+  | .error _ => pure ()
+
+/-- Same defense for the `lakefile.lean` rewriter. -/
+private def «rewriteLeanContents rejects rev containing a quote» : IO Unit := do
+  let base := makeMultiline [
+    "require batteries from git \"https://example.com/b.git\" @ \"old\"",
+    ""
+  ]
+  match LakefileProcessor.rewriteLeanContents base "batteries" "ab\"cd" with
+  | .ok _ => fail "should reject a rev containing a double quote"
+  | .error _ => pure ()
+
 def suite : TestSuite := #[
   test_case «lakefile dependency rev rewriting basic test»,
   test_case «lakefile dependency rev rewriting basic test with lean_lib multiblock»,
@@ -328,7 +365,10 @@ def suite : TestSuite := #[
   test_case «lakefile dependency rev rewriting: missing rev»,
   test_case «lakefile dependency rev rewriting: missing rev multiblock»,
   test_case «lakefile dependency rev rewriting: weird whitespace»,
-  test_case «lakefile dependency failed rev rewriting»
+  test_case «lakefile dependency failed rev rewriting»,
+  test_case «rewriteContents rejects rev on path-source block»,
+  test_case «rewriteContents rejects rev containing a quote»,
+  test_case «rewriteLeanContents rejects rev containing a quote»
 ]
 
 end HopscotchTestLib.LakefileRewriting
