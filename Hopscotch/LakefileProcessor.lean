@@ -243,14 +243,18 @@ Build the set of line-start patterns that identify a `require` declaration for `
 
 Bare name `"batteries"` matches `require batteries`.
 Scoped name `"leanprover-community/batteries"` matches the Lake DSL form
-`require "leanprover-community" / "batteries"` (with flexible whitespace around `/`).
+`require "leanprover-community" / "batteries"`, with flexible whitespace around `/`
+and with the name optionally unquoted (`require "leanprover-community" / batteries`,
+as seen in the wild for Reservoir dependencies).
 -/
 private def leanRequirePrefixes (depName : String) : Array String :=
   match depName.splitOn "/" with
   | [scope, name] =>
-      -- Scoped name: `require "scope" / "name"` with common whitespace variants around `/`.
+      -- Scoped name: `require "scope" / "name"` (or unquoted `/ name`) with common whitespace variants around `/`.
       #[ "require \"" ++ scope ++ "\" / \"" ++ name ++ "\""
        , "require \"" ++ scope ++ "\"/\"" ++ name ++ "\""
+       , "require \"" ++ scope ++ "\" / " ++ name
+       , "require \"" ++ scope ++ "\"/" ++ name
        ]
   | _ =>
       -- Bare name: `require depName` or `require "depName"` (quoted form is also valid Lake DSL).
@@ -377,25 +381,61 @@ def readLeanScope (_ : System.FilePath) (depName : String) : IO (Option String) 
   | _ => return none
 
 /--
-Rewrite `@ "old"` → `@ "new"` in a line, preserving leading whitespace and
-any content after the closing quote (e.g. a trailing `with` clause or comment).
+Rewrite the rev annotation in a line, preserving leading whitespace and any
+content after the rev (e.g. a trailing `with` clause or comment).
+
+Handles three shapes, tried in this precedence order:
+- `@ git "old"` → `@ git "new"` (Reservoir form with a quoted rev)
+- `@ git ident` → `@ git "new"` (Reservoir form with an unquoted Lean term — e.g.
+  a `def`'d identifier like `leanVersion`; the term is consumed up to the next
+  whitespace, so simple identifiers and tight expressions like `s!"v{...}"` are
+  handled, but anything containing internal whitespace is not.)
+- `@ "old"`     → `@ "new"`     (git-source form)
 -/
 private def rewriteAtRevLine (line : String) (rev : String) : Except String String :=
   let doubleQuote := "\""
-  -- Determine which marker is present: `@ git "` (Reservoir git rev) or `@ "` (git source rev).
   let atGitMarker := "@ git \""
   let atMarker := "@ \""
-  let marker := if line.contains atGitMarker then atGitMarker else atMarker
-  match line.splitOn marker with
-  | [before, afterAt] =>
-      match afterAt.splitOn doubleQuote with
-      | _ :: suffixParts =>
-          let suffix := String.intercalate doubleQuote suffixParts
-          .ok s!"{before}{marker}{rev}{doubleQuote}{suffix}"
-      | [] =>
-          .error "internal error: malformed @ rev annotation"
-  | _ =>
-      .error "internal error: line does not contain exactly one rev annotation"
+  let atGitSpaceMarker := "@ git "
+  -- Branch order matters. `@ git "` is a strict extension of `@ git `, so the
+  -- specific one must be tested first. `@ git ` is then tested before `@ "` so
+  -- that a stray `@ "..."` inside a trailing comment doesn't hijack the rewrite
+  -- on an unquoted-identifier line.
+  if line.contains atGitMarker then
+    match line.splitOn atGitMarker with
+    | [before, afterAt] =>
+        match afterAt.splitOn doubleQuote with
+        | _ :: suffixParts =>
+            let suffix := String.intercalate doubleQuote suffixParts
+            .ok s!"{before}{atGitMarker}{rev}{doubleQuote}{suffix}"
+        | [] =>
+            .error "internal error: malformed @ rev annotation"
+    | _ =>
+        .error "internal error: line does not contain exactly one rev annotation"
+  else if line.contains atGitSpaceMarker then
+    -- `@ git <unquoted-term>` — consume the term up to the next whitespace and
+    -- replace it with a quoted SHA. The Reservoir form has no URL elsewhere, so
+    -- pinning to a quoted SHA here is sufficient for Lake to resolve the dep.
+    let notWhitespace : Char → Bool := fun c => !c.isWhitespace
+    match line.splitOn atGitSpaceMarker with
+    | [before, afterMarker] =>
+        let suffix := (afterMarker.dropWhile notWhitespace).copy
+        .ok s!"{before}{atGitMarker}{rev}{doubleQuote}{suffix}"
+    | _ =>
+        .error "internal error: line contains multiple '@ git' annotations"
+  else if line.contains atMarker then
+    match line.splitOn atMarker with
+    | [before, afterAt] =>
+        match afterAt.splitOn doubleQuote with
+        | _ :: suffixParts =>
+            let suffix := String.intercalate doubleQuote suffixParts
+            .ok s!"{before}{atMarker}{rev}{doubleQuote}{suffix}"
+        | [] =>
+            .error "internal error: malformed @ rev annotation"
+    | _ =>
+        .error "internal error: line does not contain exactly one rev annotation"
+  else
+    .error "internal error: line does not contain a recognized @ rev annotation"
 
 /--
 Find the absolute line index of the `@ "rev"` annotation within the require block.
@@ -433,11 +473,14 @@ private def findLeanRevLine (lines : Array String) (headerIdx blockLen : Nat) : 
           return some lineIdx
     none
   else
-    -- `@ git "rev"` pattern (Reservoir with git revision): find the line with `@ git "`.
+    -- `@ git "rev"` or `@ git <ident>` pattern (Reservoir with git revision):
+    -- find the line bearing the `@ git ` marker. The trailing space distinguishes
+    -- this from a hypothetical `@ github…` and matches both the quoted and
+    -- unquoted-term forms.
     for i in List.range blockLen do
       let lineIdx := headerIdx + i
       let line := lines[lineIdx]!
-      if line.contains "@ git \"" then
+      if line.contains "@ git " then
         return some lineIdx
     none
 
@@ -457,7 +500,7 @@ def rewriteLeanContents (contents : String) (depName : String) (rev : String)
     throw s!"lakefile.lean contains multiple require blocks named '{depName}'"
   let (headerIdx, blockLines) := blocks[0]!
   let blockText := String.intercalate " " blockLines.toList
-  if !blockText.contains "from git" && !blockText.contains "@ git \"" then
+  if !blockText.contains "from git" && !blockText.contains "@ git " then
     throw s!"'{depName}' in lakefile.lean is not a git dependency; cannot pin a revision"
   match findLeanRevLine lines headerIdx blockLines.size with
   | some revLineIdx =>

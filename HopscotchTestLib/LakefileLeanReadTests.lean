@@ -86,6 +86,19 @@ private def scopedAtGitBlock : String :=
     ""
   ]
 
+/-- A `lakefile.lean` with the unquoted-name + variable-rev shape:
+    `require "scope" / name @ git someIdent`. -/
+private def scopedUnquotedIdentRevBlock : String :=
+  String.intercalate "\n" [
+    "import Lake",
+    "open Lake DSL",
+    "",
+    "def leanVersion : String := s!\"v{Lean.versionString}\"",
+    "",
+    "require \"leanprover-community\" / mathlib @ git leanVersion",
+    ""
+  ]
+
 -- ---------------------------------------------------------------------------
 -- Read path tests
 -- ---------------------------------------------------------------------------
@@ -202,6 +215,94 @@ private def «rewriteLeanContents rewrites scoped @ git rev» : IO Unit := do
         "rewritten content should contain the new @ git rev"
       assertTrue (!rewritten.contains "@ git \"main\"")
         "rewritten content should not contain the old @ git rev"
+
+-- ---------------------------------------------------------------------------
+-- Unquoted scoped name + variable-rev tests
+-- ---------------------------------------------------------------------------
+
+/-- Scenario: `readLeanGitUrl` returns `none` for a Reservoir dep using
+    `require "scope" / name @ git ident` — the block is found, but it has no
+    explicit `from git "url"` source. -/
+private def «readLeanGitUrl returns none for unquoted-name Reservoir dep» : IO Unit := do
+  withTempDir "hopscotch-lean-unquoted-url" fun dir => do
+    let path ← writeLakefileLean dir scopedUnquotedIdentRevBlock
+    let result ← LakefileProcessor.readLeanGitUrl path "leanprover-community/mathlib"
+    assertEq (none : Option String) result
+      "readLeanGitUrl should return none when the Reservoir block has no from-git source"
+
+/-- Scenario: `readLeanPinnedRev` returns `none` when the rev is an unquoted
+    Lean identifier — we deliberately don't try to evaluate it, so the caller
+    must fall back to `lake-manifest.json` for the actual SHA. -/
+private def «readLeanPinnedRev returns none when rev is an unquoted identifier» : IO Unit := do
+  withTempDir "hopscotch-lean-unquoted-rev" fun dir => do
+    let path ← writeLakefileLean dir scopedUnquotedIdentRevBlock
+    let result ← LakefileProcessor.readLeanPinnedRev path "leanprover-community/mathlib"
+    assertEq (none : Option String) result
+      "readLeanPinnedRev should return none for an unquoted identifier rev"
+
+/-- Scenario: `rewriteLeanContents` rewrites `@ git ident` into a quoted SHA,
+    so a lakefile using a variable for the rev can be pinned per probe. -/
+private def «rewriteLeanContents rewrites unquoted-name identifier rev» : IO Unit := do
+  let result := LakefileProcessor.rewriteLeanContents scopedUnquotedIdentRevBlock
+    "leanprover-community/mathlib" "deadbeef"
+  match result with
+  | .error e => fail s!"rewriteLeanContents failed unexpectedly: {e}"
+  | .ok rewritten =>
+      assertTrue (rewritten.contains "@ git \"deadbeef\"")
+        "rewritten content should contain @ git \"deadbeef\""
+      assertTrue (!rewritten.contains "@ git leanVersion")
+        "the original identifier rev should be gone after rewriting"
+      assertTrue (rewritten.contains "require \"leanprover-community\" / mathlib")
+        "the unquoted dependency name should be preserved verbatim"
+
+/-- Scenario: rewriting should leave a trailing comment intact on the same line. -/
+private def «rewriteLeanContents preserves trailing comment after identifier rev» : IO Unit := do
+  let contents := String.intercalate "\n" [
+    "require \"leanprover-community\" / mathlib @ git leanVersion -- pinned via def",
+    ""
+  ]
+  let result := LakefileProcessor.rewriteLeanContents contents
+    "leanprover-community/mathlib" "cafef00d"
+  match result with
+  | .error e => fail s!"rewriteLeanContents failed unexpectedly: {e}"
+  | .ok rewritten =>
+      assertTrue (rewritten.contains "@ git \"cafef00d\" -- pinned via def")
+        "rewritten line should keep the trailing comment after the new rev"
+
+/-- Scenario: `rewriteLeanContents` handles a bare-name require with an unquoted
+    identifier rev (`require mathlib @ git leanVersion`). The bare-name prefixes
+    and the `@ git ` detector both cover this shape; this test pins it down. -/
+private def «rewriteLeanContents rewrites bare-name identifier rev» : IO Unit := do
+  let contents := String.intercalate "\n" [
+    "def leanVersion : String := s!\"v{Lean.versionString}\"",
+    "",
+    "require mathlib @ git leanVersion",
+    ""
+  ]
+  let result := LakefileProcessor.rewriteLeanContents contents "mathlib" "1234abcd"
+  match result with
+  | .error e => fail s!"rewriteLeanContents failed unexpectedly: {e}"
+  | .ok rewritten =>
+      assertTrue (rewritten.contains "require mathlib @ git \"1234abcd\"")
+        "rewritten line should pin the bare-name require to a quoted SHA"
+      assertTrue (!rewritten.contains "@ git leanVersion")
+        "the original identifier rev should be replaced"
+
+/-- Scenario: CRLF line endings are preserved when rewriting an unquoted-identifier rev. -/
+private def «rewriteLeanContents preserves CRLF on identifier rev» : IO Unit := do
+  let crlfBlock := String.intercalate "\r\n" [
+    "require \"leanprover-community\" / mathlib @ git leanVersion",
+    ""
+  ]
+  let result := LakefileProcessor.rewriteLeanContents crlfBlock
+    "leanprover-community/mathlib" "feedface"
+  match result with
+  | .error e => fail s!"rewriteLeanContents failed unexpectedly: {e}"
+  | .ok rewritten =>
+      assertTrue (rewritten.contains "\r\n")
+        "CRLF line endings should be preserved after rewriting"
+      assertTrue (rewritten.contains "@ git \"feedface\"")
+        "the new quoted rev should appear in the CRLF-formatted output"
 
 -- ---------------------------------------------------------------------------
 -- Quoted bare name tests
@@ -343,6 +444,12 @@ def suite : TestSuite := #[
   test_case «readLeanGitUrl returns none for scoped @ git dep»,
   test_case «readLeanScope returns scope from scoped dep name»,
   test_case «rewriteLeanContents rewrites scoped @ git rev»,
+  test_case «readLeanGitUrl returns none for unquoted-name Reservoir dep»,
+  test_case «readLeanPinnedRev returns none when rev is an unquoted identifier»,
+  test_case «rewriteLeanContents rewrites unquoted-name identifier rev»,
+  test_case «rewriteLeanContents preserves trailing comment after identifier rev»,
+  test_case «rewriteLeanContents rewrites bare-name identifier rev»,
+  test_case «rewriteLeanContents preserves CRLF on identifier rev»,
   test_case «rewriteLeanContents rewrites an existing single-line rev»,
   test_case «rewriteLeanContents rewrites an existing multi-line rev»,
   test_case «rewriteLeanContents inserts rev when absent»,
