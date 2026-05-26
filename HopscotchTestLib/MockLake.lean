@@ -22,6 +22,12 @@ def mockLakeToolchainsPath (projectDir : System.FilePath) : System.FilePath :=
 def mockLakeDepsPath (projectDir : System.FilePath) : System.FilePath :=
   mockLakeDir projectDir / "deps.log"
 
+/-- File storing the `GITHUB_TOKEN` value visible to each mock `lake` invocation.
+    Used by the env-isolation regression test to confirm that hopscotch strips the
+    token from the environment of every child process it spawns. -/
+def mockLakeEnvPath (projectDir : System.FilePath) : System.FilePath :=
+  mockLakeDir projectDir / "env.log"
+
 /-- Environment variable used by the tests to locate the mock `lake` executable. -/
 def mockLakeCommandEnvVar : String :=
   "HOPSCOTCH_MOCK_LAKE_EXE"
@@ -37,6 +43,8 @@ def configureMockLake (projectDir : System.FilePath) (mode : String) : IO Unit :
     IO.FS.writeFile (mockLakeToolchainsPath projectDir) ""
   if !(← (mockLakeDepsPath projectDir).pathExists) then
     IO.FS.writeFile (mockLakeDepsPath projectDir) ""
+  if !(← (mockLakeEnvPath projectDir).pathExists) then
+    IO.FS.writeFile (mockLakeEnvPath projectDir) ""
 
 /-- Extract the last `rev = "..."` entry from the fixture lakefile. -/
 private def readPinnedRev (projectDir : System.FilePath) : IO String := do
@@ -76,6 +84,9 @@ def runMockLake (args : List String) : IO UInt32 := do
     handle.putStrLn s!"{stage}:{rev}"
   IO.FS.withFile (mockLakeToolchainsPath projectDir) .append fun handle => do
     handle.putStrLn s!"{stage}:{rev}:{toolchain}"
+  let observedToken := (← IO.getEnv "GITHUB_TOKEN").getD "(unset)"
+  IO.FS.withFile (mockLakeEnvPath projectDir) .append fun handle => do
+    handle.putStrLn s!"GITHUB_TOKEN={observedToken}"
   if let some dep := dependencyName? then
     IO.FS.withFile (mockLakeDepsPath projectDir) .append fun handle => do
       handle.putStrLn dep

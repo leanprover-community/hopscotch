@@ -777,6 +777,38 @@ private def «skip build: build step not invoked» : IO Unit := do
     assertTrue (calls.all (·.startsWith "update:"))
       "only lake update calls should appear when the build step is skipped"
 
+/-- Scenario: `GITHUB_TOKEN` is stripped from the environment of every `lake` child process. -/
+private def «strip GITHUB_TOKEN from lake child env» : IO Unit := do
+  withTempDir "hopscotch-env-scrub" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\ngood2\n"
+    configureMockLake projectDir "success"
+    -- The `lake test` driver sets `GITHUB_TOKEN` in the test-process env so this
+    -- scenario can verify it is scrubbed. If the driver ever stops doing so, both
+    -- the protected and unprotected code paths would observe `(unset)` in the
+    -- child, silently masking a regression; guard against that drift here.
+    match ← IO.getEnv "GITHUB_TOKEN" with
+    | none =>
+        fail "GITHUB_TOKEN missing from test-process env; the lake test driver \
+              should set a sentinel value so this scenario can verify scrubbing"
+    | some _ => pure ()
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+      quiet := true
+    } ignoreOutput
+    assertEq 0 result.exitCode "all-success run should complete"
+    let envLog := (← IO.FS.readFile (mockLakeEnvPath projectDir)).trimAscii.copy
+    let observations := (envLog.splitOn "\n").filter (! ·.isEmpty)
+    assertTrue (!observations.isEmpty)
+      "mock lake should have been invoked at least once; env.log was empty"
+    for line in observations do
+      assertEq "GITHUB_TOKEN=(unset)" line
+        "lake child observed GITHUB_TOKEN in its environment"
+
 def suite : TestSuite := #[
   test_case «downstream toolchain command resolution»,
   test_case «stop at first build failure»,
@@ -803,7 +835,8 @@ def suite : TestSuite := #[
   test_case «bisect default end state pins first bad commit»,
   test_case «bisect keep last good pins last good commit»,
   test_case «linear keep last good pins last good commit»,
-  test_case «skip build: build step not invoked»
+  test_case «skip build: build step not invoked»,
+  test_case «strip GITHUB_TOKEN from lake child env»
 ]
 
 end HopscotchTestLib.IOTests

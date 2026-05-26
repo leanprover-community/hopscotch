@@ -67,6 +67,7 @@ private def runCommand (lakeCommand : String) (projectDir logPath : System.FileP
     stdin := .null
     stdout := .piped
     stderr := .piped
+    env := secretScrubEnv
   }
   -- Read stdout and stderr concurrently; sequential reading could deadlock
   -- if one pipe fills while the process waits to write to the other.
