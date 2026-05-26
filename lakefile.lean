@@ -3,7 +3,7 @@ import Lake
 open Lake DSL
 
 package "hopscotch" where
-  version := v!"1.4.0"
+  version := v!"1.5.0"
 
 lean_lib Hopscotch
 
@@ -33,9 +33,16 @@ lean_exe HopscotchMockLake where
   let some testExe := ws.findLeanExe? `HopscotchTest
     | error "missing test executable `HopscotchTest`"
   let testExeFile ← ws.runBuild testExe.fetch
+  -- Set a sentinel `GITHUB_TOKEN` in the test-process env so the env-isolation
+  -- regression test in `IOTests` has something concrete to assert is scrubbed
+  -- from each mock `lake` child invocation. Hopscotch's own test suite does not
+  -- read `GITHUB_TOKEN` (it never hits the live GitHub API), so overriding it
+  -- here is safe.
   let child ← IO.Process.spawn {
     cmd := testExeFile.toString
     args := args.toArray
-    env := (← getAugmentedEnv).push ("HOPSCOTCH_MOCK_LAKE_EXE", some mockLakeExeFile.toString)
+    env := (← getAugmentedEnv)
+      |>.push ("HOPSCOTCH_MOCK_LAKE_EXE", some mockLakeExeFile.toString)
+      |>.push ("GITHUB_TOKEN", some "hopscotch-test-sentinel-do-not-leak")
   }
   child.wait

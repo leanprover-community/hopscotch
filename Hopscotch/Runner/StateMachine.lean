@@ -117,6 +117,7 @@ def checkGitWorktree (projectDir : System.FilePath) : IO GitCheckResult := do
       cmd := "git"
       args := #["status", "--porcelain"]
       cwd := projectDir
+      env := secretScrubEnv
     }
     if output.exitCode != 0 then
       return .unavailable

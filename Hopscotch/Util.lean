@@ -109,4 +109,17 @@ def writeJsonFile {α : Type _} [Lean.ToJson α] (path : System.FilePath) (value
 def realPathNormalized (path : System.FilePath) : IO System.FilePath := do
   return (← IO.FS.realPath path).normalize
 
+/--
+Environment overrides applied when spawning child processes that execute
+untrusted downstream code (`lake`, `git status` against the downstream
+worktree). Currently unsets `GITHUB_TOKEN` so that a malicious downstream
+(for example a `lakefile.lean` that reads env vars during elaboration) cannot
+exfiltrate the token Hopscotch itself uses for GitHub API rate-limiting.
+
+Used with `IO.Process.SpawnArgs.env`: an entry of `(name, none)` removes the
+variable from the inherited environment before the child starts.
+-/
+def secretScrubEnv : Array (String × Option String) :=
+  #[("GITHUB_TOKEN", none)]
+
 end Hopscotch
