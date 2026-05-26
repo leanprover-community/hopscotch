@@ -27,6 +27,19 @@ private def clearCulpritLogs (paths : Paths) : IO Unit := do
   if ← paths.culpritLogsDir.pathExists then
     IO.FS.removeDirAll paths.culpritLogsDir
 
+/-- Delete everything under `<projectDir>/.lake/` except the `hopscotch` subfolder
+    (which holds the persisted state we want to keep across probes).  No-op when
+    `.lake/` does not exist yet. -/
+private def nukeLakeDir (paths : Paths) : IO Unit := do
+  let lakeDir := paths.projectDir / ".lake"
+  unless ← lakeDir.pathExists do return
+  for entry in ← lakeDir.readDir do
+    if entry.fileName == "hopscotch" then continue
+    if ← entry.path.isDir then
+      IO.FS.removeDirAll entry.path
+    else
+      IO.FS.removeFile entry.path
+
 /-- After the search completes, apply `mkBump` so the local lakefile/toolchain
     reflects the desired endpoint.  Failure is non-fatal: the search result is
     already saved; we just emit a warning.
@@ -72,6 +85,15 @@ was interrupted between the bump succeeding and a verify step completing.
 private def runProbe (config : Config) (paths : Paths) (base : PersistedState)
     (stepNum : Nat) (index : Nat) (commit : String)
     (emit : ConsoleStyle → String → IO Unit) : IO ProbeRunResult := do
+  -- INTERNAL: HOPSCOTCH_DEBUG_NUKE_LAKEDIR wipes `<projectDir>/.lake/` (preserving
+  -- our own state under `.lake/hopscotch/`) before every probe, forcing a fully
+  -- fresh build.  Intended as a paranoia knob for obscure failures suspected to
+  -- be caused by stale cached artifacts.  Not part of the public CLI; may change
+  -- without notice.
+  let nukeLakeDirEnabled ←
+    match ← IO.getEnv "HOPSCOTCH_DEBUG_NUKE_LAKEDIR" with
+    | some "true" | some "1" => pure true
+    | _                      => pure false
   let bumpStep := config.strategy.mkBump commit
   let namePrefix := config.strategy.logPrefix stepNum index
   -- Determine whether we are resuming at a specific stage of this exact commit.
@@ -80,18 +102,25 @@ private def runProbe (config : Config) (paths : Paths) (base : PersistedState)
     then base.stage
     else none
   -- We are resuming into a verify step when the saved stage is a verify stage
-  -- (as opposed to the bump stage or no saved stage at all).
+  -- (as opposed to the bump stage or no saved stage at all).  When the nuke
+  -- knob is on, the previous probe's `.lake/` is gone, so we must always re-run
+  -- the bump (which writes `lake-manifest.json` via `lake update`).
   let resumingVerify :=
-    match resumeStage? with
-    | none => false
-    | some stage =>
-        -- bumpStep.stage is always .bump; this rules out resuming mid-bump.
-        stage != bumpStep.stage && config.strategy.verify.any (·.stage == stage)
+    if nukeLakeDirEnabled then false
+    else
+      match resumeStage? with
+      | none => false
+      | some stage =>
+          -- bumpStep.stage is always .bump; this rules out resuming mid-bump.
+          stage != bumpStep.stage && config.strategy.verify.any (·.stage == stage)
   -- In bisect mode, restore the baseline toolchain before every fresh probe.
   if base.runMode == .bisect && !resumingVerify then
     restoreBisectBaselineToolchain paths base
   let timestamp ← nowUtcString
   emit .attempt s!"[{timestamp}] Attempting commit {commit} ({index + 1}/{base.items.size})"
+  if nukeLakeDirEnabled then
+    emit .running s!"[{← nowUtcString}] Wiping .lake/ (HOPSCOTCH_DEBUG_NUKE_LAKEDIR)"
+    nukeLakeDir paths
   -- Bump phase: apply the version then fetch. Skipped when resuming mid-verify.
   if !resumingVerify then
     let _ ← saveState paths config.resultsJsonPath <| buildRunningState base index commit (some bumpStep.stage)
