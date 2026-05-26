@@ -261,6 +261,50 @@ private def leanRequirePrefixes (depName : String) : Array String :=
       #["require " ++ depName, "require \"" ++ depName ++ "\""]
 
 /--
+Update the Lean block-comment nesting depth after scanning `line`.
+
+Lean block comments `/- … -/` (and the docstring variant `/-! … -/`) may nest.
+A `--` line comment at depth 0 closes the line; inside a block comment, `--` is
+not special.
+
+String literals are not tracked: a comment-opener inside a quoted string would
+incorrectly open a comment. Lakefile string literals (URLs, revs, identifiers)
+do not conventionally contain such sequences, so this is good enough in practice.
+-/
+private def updateCommentDepth (line : String) (depth : Nat) : Nat := Id.run do
+  let arr := line.toList.toArray
+  let mut d := depth
+  let mut i := 0
+  while i < arr.size do
+    if i + 1 < arr.size && arr[i]! == '/' && arr[i+1]! == '-' then
+      d := d + 1
+      i := i + 2
+    else if d > 0 && i + 1 < arr.size && arr[i]! == '-' && arr[i+1]! == '/' then
+      d := d - 1
+      i := i + 2
+    else if d == 0 && i + 1 < arr.size && arr[i]! == '-' && arr[i+1]! == '-' then
+      -- Line comment at depth 0 swallows the rest of the line.
+      i := arr.size
+    else
+      i := i + 1
+  d
+
+/--
+For each line, compute the block-comment nesting depth at its **start**.
+
+A line whose start depth is nonzero is entirely inside a `/- … -/` comment
+from the require-scanner's perspective, and should be ignored when looking
+for `require` headers.
+-/
+private def commentDepthAtLineStarts (lines : Array String) : Array Nat := Id.run do
+  let mut depths : Array Nat := Array.mkEmpty lines.size
+  let mut depth : Nat := 0
+  for line in lines do
+    depths := depths.push depth
+    depth := updateCommentDepth line depth
+  depths
+
+/--
 Scan `lines` and collect every `require` block whose dependency name equals `depName`.
 
 Returns an array of `(headerLineIndex, blockLines)` pairs, where `blockLines`
@@ -270,16 +314,20 @@ For a bare name like `"batteries"`, the match is `require batteries` followed by
 a space, `@`, or end-of-string (preventing `"batteries"` from falsely matching
 `"batteriesExtra"`). For a scoped name like `"leanprover-community/batteries"`,
 the match is `require "leanprover-community" / "batteries"`.
+
+Lines inside a `/- … -/` block comment are skipped — a `require` written inside
+a docstring (e.g. as a usage example) must not be treated as a real declaration.
 -/
 private def findLeanRequireBlocks (lines : Array String) (depName : String)
     : Array (Nat × Array String) := Id.run do
   let mut blocks : Array (Nat × Array String) := #[]
   let prefixes := leanRequirePrefixes depName
+  let depths := commentDepthAtLineStarts lines
   let mut i := 0
   while i < lines.size do
     let trimmed := lines[i]!.trimAscii
     -- Check if this line is a require header for depName.
-    let isMatch := prefixes.any fun pfx =>
+    let isMatch := depths[i]! == 0 && prefixes.any fun pfx =>
       trimmed == pfx ||
       trimmed.startsWith (pfx ++ " ") ||
       trimmed.startsWith (pfx ++ "@")
