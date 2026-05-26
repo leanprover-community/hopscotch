@@ -336,6 +336,72 @@ private def «rewriteLeanContents rewrites quoted bare name block» : IO Unit :=
         "rewritten content should not contain the old rev annotation"
 
 -- ---------------------------------------------------------------------------
+-- Block comment / docstring tests
+-- ---------------------------------------------------------------------------
+
+/-- A `lakefile.lean` whose docstring contains an example `require` line inside
+    a Markdown code block. The real `require` sits below the closing comment marker.
+    Regression test: hopscotch used to report "multiple require blocks". -/
+private def docstringExampleBlock : String :=
+  String.intercalate "\n" [
+    "import Lake",
+    "open Lake DSL",
+    "",
+    "/-!",
+    "# USER DEPENDENCIES",
+    "",
+    "Add any further dependencies of your game below.",
+    "",
+    "Note: If your package (like `mathlib` or `Std`) has tags of the form `v4.X.0` then",
+    "you can use",
+    "",
+    "```",
+    "require \"leanprover-community\" / mathlib @ git leanVersion",
+    "```",
+    " -/",
+    "",
+    "",
+    "",
+    "require \"leanprover-community\" / mathlib @ git leanVersion",
+    ""
+  ]
+
+/-- Scenario: a `require` inside a docstring (`/-! … -/`) must not be counted as
+    a real require block. The real require below the comment must still be
+    rewritten correctly. -/
+private def «rewriteLeanContents ignores require inside docstring» : IO Unit := do
+  let result := LakefileProcessor.rewriteLeanContents docstringExampleBlock
+    "leanprover-community/mathlib" "deadbeef"
+  match result with
+  | .error e => fail s!"rewriteLeanContents failed unexpectedly: {e}"
+  | .ok rewritten =>
+      assertTrue (rewritten.contains "@ git \"deadbeef\"")
+        "the real require below the docstring should be pinned to the new rev"
+      -- The example require inside the docstring must remain verbatim.
+      assertTrue (rewritten.contains "require \"leanprover-community\" / mathlib @ git leanVersion")
+        "the example require inside the docstring should be left untouched"
+
+/-- Scenario: nested block comments must not leak a closing marker out of the
+    outer comment. -/
+private def «rewriteLeanContents handles nested block comments» : IO Unit := do
+  let contents := String.intercalate "\n" [
+    "/- outer",
+    "  /- inner",
+    "  require batteries from git \"https://example.com/x.git\" @ \"old\"",
+    "  -/",
+    "  require batteries from git \"https://example.com/x.git\" @ \"old\"",
+    "-/",
+    "require batteries from git \"https://example.com/x.git\" @ \"old\"",
+    ""
+  ]
+  let result := LakefileProcessor.rewriteLeanContents contents "batteries" "newrev"
+  match result with
+  | .error e => fail s!"rewriteLeanContents failed unexpectedly: {e}"
+  | .ok rewritten =>
+      assertTrue (rewritten.contains "@ \"newrev\"")
+        "the real require below the nested comments should be pinned"
+
+-- ---------------------------------------------------------------------------
 -- Rewrite path tests
 -- ---------------------------------------------------------------------------
 
@@ -450,6 +516,8 @@ def suite : TestSuite := #[
   test_case «rewriteLeanContents preserves trailing comment after identifier rev»,
   test_case «rewriteLeanContents rewrites bare-name identifier rev»,
   test_case «rewriteLeanContents preserves CRLF on identifier rev»,
+  test_case «rewriteLeanContents ignores require inside docstring»,
+  test_case «rewriteLeanContents handles nested block comments»,
   test_case «rewriteLeanContents rewrites an existing single-line rev»,
   test_case «rewriteLeanContents rewrites an existing multi-line rev»,
   test_case «rewriteLeanContents inserts rev when absent»,
