@@ -1,6 +1,8 @@
 -- This module serves as the root of the `Hopscotch` library.
 -- Import modules here that should be built as part of the library.
 import Hopscotch.ItemList
+import Hopscotch.AutoFix.State
+import Hopscotch.AutoFix
 import Hopscotch.GitHub
 import Hopscotch.LakefileProcessor
 import Hopscotch.Runner.Types
@@ -11,4 +13,5 @@ import Hopscotch.Runner
 import Hopscotch.State
 import Hopscotch.Util
 import Hopscotch.Results
+import Hopscotch.FixCommand
 import Hopscotch.CLI

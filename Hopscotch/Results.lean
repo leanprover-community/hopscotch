@@ -22,7 +22,29 @@ open Lean
 
 /-- Public schema version for `results.json`. Bump on any
     backward-incompatible change to the fields below. -/
-def resultsSchemaVersion : Nat := 1
+def resultsSchemaVersion : Nat := 2
+
+/-- One automated fix *proposed* for the failure boundary, as surfaced in
+    `results.json`. Never applied by the run; `hopscotch fix apply` opts in. -/
+structure AutoFixJson where
+  fixId               : String
+  oldModule           : String
+  newModules          : Array String
+  /-- The source shim also defines declarations (compat aliases) the rewrite
+      drops: the migration may be partial. See `ModuleMigration.shimHasDeclarations`. -/
+  shimHasDeclarations : Bool
+  deriving ToJson, FromJson, Repr, BEq, Inhabited
+
+/-- Encode a proposed migration for `results.json`. Inverse of `toMigration`. -/
+def AutoFixJson.ofMigration (m : AutoFix.ModuleMigration) : AutoFixJson :=
+  { fixId := m.fixId, oldModule := m.oldModule, newModules := m.newModules
+    shimHasDeclarations := m.shimHasDeclarations }
+
+/-- Decode a `results.json` entry back into the runner's migration record, e.g.
+    for application by `hopscotch fix`. Inverse of `ofMigration`. -/
+def AutoFixJson.toMigration (a : AutoFixJson) : AutoFix.ModuleMigration :=
+  { fixId := a.fixId, oldModule := a.oldModule, newModules := a.newModules
+    shimHasDeclarations := a.shimHasDeclarations }
 
 /-- One cached bisect probe outcome, as surfaced in `results.json`. -/
 structure ProbeResultJson where
@@ -63,6 +85,18 @@ structure ResultsJson where
   logsDir              : String
   summaryPath          : String
   bisect               : Option BisectJson
+  /-- Automated fixes proposed for the failure boundary (empty when none, or when
+      the run did not stop). Apply with `hopscotch fix apply`. An entry with empty
+      `newModules` means: remove the import. -/
+  proposedFixes        : Array AutoFixJson
+  /-- Advisories: downstream imports that resolve through a live deprecation shim
+      in the dependency — they build today but break when the shim is deleted
+      upstream. Informational; not applied by `hopscotch fix apply`. -/
+  deprecatedImports    : Array AutoFixJson
+  /-- Notes from automated-fix detection, prefixed with the owning fix's id —
+      e.g. a module that was deleted upstream with no replacement shim, so no
+      fix could be proposed. -/
+  detectionNotes       : Array String
   updatedAt            : String
   deriving ToJson, FromJson, Repr, BEq, Inhabited
 
@@ -140,6 +174,9 @@ def fromState (paths : Paths) (state : PersistedState) : ResultsJson :=
     logsDir              := paths.logsDir.toString
     summaryPath          := paths.summaryPath.toString
     bisect               := state.bisect.map (toBisectJson state.items)
+    proposedFixes        := state.proposedFixes.map AutoFixJson.ofMigration
+    deprecatedImports    := state.deprecatedImports.map AutoFixJson.ofMigration
+    detectionNotes       := state.autoFixNotes
     updatedAt            := state.updatedAt }
 
 /-- Write `results.json` for the current state to the internal path, and also

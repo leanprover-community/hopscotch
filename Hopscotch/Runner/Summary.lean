@@ -33,6 +33,44 @@ private def bisectKnownBadCommit (state : PersistedState) : String :=
   | some bisect => (state.items[bisect.knownBadIndex]?).getD "unknown"
   | none => "unknown"
 
+/-- Render the "Proposed fixes" section listing migrations detected at the failure
+    boundary. Empty when none. The run never applies them — the note points the
+    user at `hopscotch fix apply` for the opt-in. -/
+private def autoFixLines (state : PersistedState) : List String :=
+  if state.proposedFixes.isEmpty then []
+  else
+    let entries := state.proposedFixes.toList.map fun m =>
+      s!"- [{m.fixId}] `{m.describe}`"
+    -- A stopped bisect session is terminal, so "re-run" needs a `clean` first;
+    -- linear sessions resume in place.
+    let followUp := match state.runMode with
+      | .linear => "`hopscotch fix apply` (or manually), then re-run to search past it:"
+      | .bisect => "`hopscotch fix apply` (or manually), then `hopscotch clean` and re-run \
+                    to search past it:"
+    [ "", "## Proposed fixes",
+      "The failure at this commit looks repairable. Apply these import rewrites with",
+      followUp ]
+      ++ entries
+
+/-- Render detection notes: findings recorded without a fix, e.g. a module that
+    was deleted upstream with no replacement shim. Empty when none. -/
+private def autoFixNoteLines (state : PersistedState) : List String :=
+  if state.autoFixNotes.isEmpty then []
+  else
+    [ "", "## Automated fix notes" ] ++ state.autoFixNotes.toList.map (s!"- {·}")
+
+/-- Render the "Deprecated imports" advisory section: imports that resolve through
+    live dependency deprecation shims. Empty when none. -/
+private def deprecatedImportLines (state : PersistedState) : List String :=
+  if state.deprecatedImports.isEmpty then []
+  else
+    let entries := state.deprecatedImports.toList.map fun m =>
+      s!"- [{m.fixId}] `{m.describe}`"
+    [ "", "## Deprecated imports",
+      "These imports currently resolve through dependency deprecation shims; they keep",
+      "building until the shims are deleted upstream. Consider migrating now:" ]
+      ++ entries
+
 /-- Render the persisted run state as the user-facing markdown summary body. -/
 def summaryText (state : PersistedState) : String :=
   let header := "# Summary"
@@ -93,7 +131,9 @@ def summaryText (state : PersistedState) : String :=
               s!"Next probe commit: {state.currentCommit.getD "unknown"}",
               stageLine
             ]
-  String.intercalate "\n" <| [header, ""] ++ statusLines ++ [""]
+  String.intercalate "\n" <|
+    [header, ""] ++ statusLines ++ autoFixLines state ++ autoFixNoteLines state
+      ++ deprecatedImportLines state ++ [""]
 
 /-- Apply terminal colors to the plain-text summary shown directly to users. -/
 def renderSummaryForTerminal (mode : ColorMode) (summary : String) : String :=

@@ -27,10 +27,11 @@ The binary will be located at `.lake/build/bin/hopscotch`. You can add it to you
 
 ## Modes
 
-`hopscotch` has three subcommands:
+`hopscotch` has four subcommands:
 
 - **`dep`** — test a range of dependency commits against the downstream project.
 - **`toolchain`** — test a list of Lean toolchain strings against the downstream project.
+- **`fix`** — apply, inspect, or undo the [automated fixes](#automated-fix-proposals-and-deprecation-advisories) a `dep` run proposed.
 - **`clean`** — delete the session state for a project, so a new session can be started.
 
 Within each subcommand, two execution strategies are available, selected with `--scan-mode [linear|bisect]`:
@@ -81,6 +82,7 @@ If any step fails, `hopscotch` stops, records the failure, and exits with code `
 | `--quiet` | Suppress lake command output. |
 | `--allow-dirty-workspace` | Skip git-cleanliness checks (both the linear-mode resume check and the bisect session-start check). |
 | `--keep-last-good` | After the search completes, leave the lakefile pinned to the last *passing* commit instead of the first *failing* one (see [End-state behavior](#end-state-behavior) below). |
+| `--no-auto-fix` | Disable [automated-fix detection](#automated-fix-proposals-and-deprecation-advisories) at the run's conclusion. |
 | `--config-file PATH` | Load options from a JSON config file. CLI flags take precedence. |
 
 `--from` or `--git-url` can be passed without `--to`; in that case `--to` defaults to the tip of the default branch.
@@ -142,6 +144,7 @@ Pass `--allow-dirty-workspace` to override this too, if you know what you are do
 
 - `state.json` — restartable state (committed index, current stage, bisect window, etc.)
 - `summary.md` — human-readable outcome
+- `results.json` — structured, versioned counterpart of `summary.md` for automation (schema: [docs/results.schema.json](docs/results.schema.json)); this is also what `hopscotch fix` reads
 - `logs/` — per-step build logs; names encode the step counter and list position (e.g. `3-abc12345-build.log` in linear mode, `1-23-abc12345-build.log` in bisect mode)
 - `logs/culprit/` — copy of the log(s) for the **culprit commit**: the first commit in the tested range that caused a build failure. This folder is created when a failure is found and removed automatically in linear mode when the culprit commit passes on the next resume (i.e. after you fix the issue). It lets you find the relevant log immediately without reading the summary.
 
@@ -309,6 +312,29 @@ Unlike `dep`, the toolchain subcommand does not touch the lakefile or run `lake 
 ```
 
 For a step-by-step walkthrough, see [docs/toolchain-example.md](docs/toolchain-example.md).
+
+## Automated fix proposals and deprecation advisories
+
+mathlib deprecates modules through `deprecated_module` shims: a module file is deleted (its content split or moved) and a shim re-exporting the new location(s) takes its place, sometimes only days or weeks later. The shim itself is bulk-deleted about six months after that. Each stage of that lifecycle can break a downstream `import`, and the repair is usually mechanical: rewrite the import to the modules the shim points at.
+
+A `dep` run detects these cases automatically when it concludes. Detection does not modify your workspace — it records its findings in `summary.md` and `results.json`, and acting on them is your choice:
+
+- **Proposed fixes** (`proposedFixes` in `results.json`, exit code still `1`): the failure boundary appears repairable. For example, the first bad commit deleted a module you import, and a deprecation shim (in the range, in the dependency's history, or on its default branch) names the replacement. A shim that re-exports nothing ("Upstreamed to core") yields a proposal to remove the import.
+- **Deprecation advisories** (`deprecatedImports`): imports that currently resolve through a live shim. They build today (possibly with warnings) but break when the shim is deleted upstream. Advisories are recorded on every conclusion, including fully-green runs. If the downstream's build treats warnings as errors (lake's `--wfail`/`--iofail`), the deprecation warning itself fails the build and surfaces as a proposal at the deprecating commit instead.
+
+The `fix` subcommand acts on a recorded `results.json`:
+
+```
+hopscotch fix <apply|revert|list> [--project-dir DIR] [--from RESULTS_JSON] [--advisories]
+```
+
+- **`list`** prints the proposals and advisories.
+- **`apply`** performs the proposed import rewrites, backing each original up under `.lake/hopscotch/autofix-backups/`. With `--advisories` it also migrates the deprecated-but-working imports (skipping any whose shim still defines compatibility aliases, with a message — rewriting those could regress a working build). Migrations are applied by re-scanning the workspace, so `--from` lets you apply a `results.json` produced elsewhere (e.g. by CI) to a fresh checkout, enabling automated "fix breaking changes" PRs from CI.
+- **`revert`** restores every backed-up original.
+
+A run stops at a reproducible boundary and proposes its fix. You apply it with `hopscotch fix apply`, commit, and run again to search past the repaired breakage. A proposal repairs the import; if the upstream change also renamed declarations your code uses, the follow-up build tells you what remains. The fix PR's CI is the validation step.
+
+The full scenario catalog and the CI playbook are in [docs/autofix-scenarios.md](docs/autofix-scenarios.md); for minimal end-to-end timelines of each case, see [docs/autofix-examples.md](docs/autofix-examples.md).
 
 ## The `clean` subcommand
 

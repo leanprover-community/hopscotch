@@ -1,4 +1,5 @@
 import Hopscotch.State
+import Hopscotch.AutoFix
 import Hopscotch.Util
 
 namespace Hopscotch.Runner
@@ -61,6 +62,11 @@ structure Config where
   /-- Optional additional path to mirror `.lake/hopscotch/results.json` to
       after every state transition. The internal copy is always written. -/
   resultsJsonPath : Option System.FilePath := none
+  /-- Automated-fix registry whose detection runs once against the failure
+      boundary after a run stops (proposals only; nothing is applied). Empty
+      disables detection. The CLI populates this with `AutoFix.standardAutoFixes`
+      unless `--no-auto-fix` is passed; library callers may inject their own fixes. -/
+  autoFixes : Array Hopscotch.AutoFix.Fix := #[]
   strategy : RunStrategy
 
 /-- Final outcome returned to the CLI after a run or resume attempt. -/

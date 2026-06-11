@@ -1,5 +1,6 @@
 import Hopscotch.Runner
 import Hopscotch.State
+import Hopscotch.FixCommand
 import Hopscotch.Util
 
 namespace Hopscotch.CLI
@@ -16,7 +17,7 @@ def depUsage : String :=
   "[--commits-file PATH | --to REF [--from REF]] " ++
   "[--git-url URL] [--project-dir DIR] [--quiet] [--allow-dirty-workspace] " ++
   "[--keep-last-good] [--scan-mode [linear|bisect]] [--results-json PATH] " ++
-  "[--config-file PATH]"
+  "[--no-auto-fix] [--config-file PATH]"
 
 /-- Shared usage text for `hopscotch toolchain`. -/
 def toolchainUsage : String :=
@@ -25,17 +26,23 @@ def toolchainUsage : String :=
   "[--keep-last-good] [--scan-mode [linear|bisect]] [--results-json PATH] " ++
   "[--config-file PATH]"
 
+/-- Shared usage text for `hopscotch fix`. -/
+def fixUsage : String :=
+  "usage: hopscotch fix <apply|revert|list> [--project-dir DIR] [--from RESULTS_JSON] [--advisories]"
+
 def helpText : String :=
   "hopscotch — binary-search or linearly scan dependency commits to find a regression\n\n" ++
   "usage: hopscotch <subcommand> [OPTIONS]\n\n" ++
   "Subcommands:\n" ++
   "  dep <name>   Bisect/scan a dependency's commit range\n" ++
   "  toolchain    Bisect/scan a list of toolchain strings\n" ++
+  "  fix          Apply/list/revert automated fixes recorded by a run\n" ++
   "  clean        Remove session state (.lake/hopscotch/)\n\n" ++
   "Global flags:\n" ++
   "  --help, -h   Show this help text\n" ++
   "  --version    Print version and exit\n\n" ++
   depUsage ++ "\n\n" ++ toolchainUsage ++ "\n\n" ++
+  fixUsage ++ "\n\n" ++
   "usage: hopscotch clean [--project-dir DIR]"
 
 /-- Config file options for the `dep` subcommand. All fields are optional;
@@ -46,6 +53,7 @@ private structure DepConfigFile where
   projectDir : Option String := none
   gitUrl : Option String := none
   fromRef : Option String := none
+  autoFix : Option Bool := none
   deriving FromJson, Inhabited
 
 /-- Config file options for the `toolchain` subcommand. All fields are optional;
@@ -79,6 +87,7 @@ private structure DepParseState where
   allowDirtyWorkspace : Option Bool := none
   keepLastGood : Option Bool := none
   resultsJsonPath : Option System.FilePath := none
+  autoFix : Option Bool := none
 
 private def parseDepOptions (state : DepParseState) (args : List String) : IO DepParseState := do
   match args with
@@ -104,6 +113,10 @@ private def parseDepOptions (state : DepParseState) (args : List String) : IO De
       parseDepOptions { state with allowDirtyWorkspace := some true } rest
   | "--keep-last-good" :: rest =>
       parseDepOptions { state with keepLastGood := some true } rest
+  | "--no-auto-fix" :: rest =>
+      parseDepOptions { state with autoFix := some false } rest
+  | "--auto-fix" :: rest =>
+      parseDepOptions { state with autoFix := some true } rest
   | "--scan-mode" :: "bisect" :: rest =>
       parseDepOptions { state with runMode := .bisect } rest
   | "--scan-mode" :: "linear" :: rest =>
@@ -115,6 +128,7 @@ private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
   let cfg : DepConfigFile ← loadConfigFile state.configFile
   let allowDirtyWorkspace := (state.allowDirtyWorkspace <|> cfg.allowDirtyWorkspace).getD false
   let keepLastGood := (state.keepLastGood <|> cfg.keepLastGood).getD false
+  let autoFixEnabled := (state.autoFix <|> cfg.autoFix).getD true
   let projectDir := (state.projectDir <|> cfg.projectDir.map System.FilePath.mk).getD "."
   let fromRef := state.fromRef <|> cfg.fromRef
   let gitUrl := state.gitUrl <|> cfg.gitUrl
@@ -154,6 +168,7 @@ private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
     allowDirtyWorkspace := allowDirtyWorkspace
     keepLastGood := keepLastGood
     resultsJsonPath := state.resultsJsonPath
+    autoFixes := if autoFixEnabled then Hopscotch.AutoFix.standardAutoFixes else #[]
     strategy := strategy
   }
 
@@ -241,12 +256,43 @@ private def parseCleanOptions (projectDir : Option System.FilePath)
       throw <| IO.userError "usage: hopscotch clean [--project-dir DIR]"
 
 -- ---------------------------------------------------------------------------
+-- fix subcommand
+-- ---------------------------------------------------------------------------
+
+private def parseFixOptions (config : FixCommand.Config)
+    (args : List String) : IO FixCommand.Config := do
+  match args with
+  | [] => return config
+  | "--project-dir" :: dir :: rest =>
+      parseFixOptions { config with projectDir := System.FilePath.mk dir } rest
+  | "--from" :: path :: rest =>
+      parseFixOptions { config with fromPath := some (System.FilePath.mk path) } rest
+  | "--advisories" :: rest =>
+      parseFixOptions { config with includeAdvisories := true } rest
+  | _ =>
+      throw <| IO.userError fixUsage
+
+private def parseFix (args : List String) : IO FixCommand.Config := do
+  match args with
+  | actionStr :: rest =>
+      let action ←
+        match actionStr with
+        | "apply"  => pure FixCommand.Action.apply
+        | "revert" => pure FixCommand.Action.revert
+        | "list"   => pure FixCommand.Action.list
+        | _        => throw <| IO.userError fixUsage
+      parseFixOptions { action := action } rest
+  | [] =>
+      throw <| IO.userError fixUsage
+
+-- ---------------------------------------------------------------------------
 -- Entrypoint
 -- ---------------------------------------------------------------------------
 
 /-- The action to perform, parsed from CLI arguments. -/
 inductive Command where
   | run     (config : Runner.Config)
+  | fix     (config : FixCommand.Config)
   | clean   (projectDir : System.FilePath)
   | version
   | help
@@ -259,6 +305,7 @@ def parseArgs (args : List String) : IO Command := do
   | "-h" :: _           => return .help
   | "dep" :: rest       => return .run (← parseDep rest)
   | "toolchain" :: rest => return .run (← parseToolchain rest)
+  | "fix" :: rest       => return .fix (← parseFix rest)
   | "clean" :: rest     =>
       let projectDir ← parseCleanOptions none rest
       return .clean projectDir

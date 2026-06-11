@@ -10,6 +10,7 @@ private def parse (args : List String) : IO Runner.Config := do
   match ← CLI.parseArgs args with
   | .run config => return config
   | .clean _ => throw <| IO.userError "expected run command, got clean"
+  | .fix _ => throw <| IO.userError "expected run command, got fix"
   | .help | .version => throw <| IO.userError "expected run command, got help/version"
 
 /-- Assert that parsing the given args fails. -/

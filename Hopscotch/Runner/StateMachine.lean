@@ -115,12 +115,14 @@ def checkGitWorktree (projectDir : System.FilePath) : IO GitCheckResult := do
   try
     let output ← IO.Process.output {
       cmd := "git"
-      args := #["status", "--porcelain"]
+      args := #["status", "--porcelain", "-z"]
       cwd := projectDir
       env := secretScrubEnv
     }
     if output.exitCode != 0 then
       return .unavailable
+    -- `-z` output is NUL-separated with no quoting or escaping, so emptiness is
+    -- exact regardless of special characters in paths: any entry means dirty.
     return if output.stdout.trimAscii.isEmpty then .clean else .dirty
   catch _ =>
     return .unavailable
@@ -287,7 +289,7 @@ def buildBisectAllPassState (base : PersistedState) (bisect : BisectState)
 
 /-- Create the initial persisted state for a fresh linear-mode session. -/
 private def mkInitialAdvanceState (paths : Paths) (strategyScope : String)
-    (commits : Array String) : IO PersistedState := do
+    (commits : Array String) (lowerBoundRef : Option String) : IO PersistedState := do
   let updatedAt ← nowUtcString
   return {
     projectDir := paths.projectDir
@@ -300,12 +302,13 @@ private def mkInitialAdvanceState (paths : Paths) (strategyScope : String)
     status := .running
     stage := none
     lastLogPath := none
+    lowerBoundRef := lowerBoundRef
     updatedAt := updatedAt
   }
 
 /-- Create the initial persisted state for a fresh bisect session. -/
 private def mkInitialBisectState (paths : Paths) (strategyScope : String)
-    (commits : Array String) : IO PersistedState := do
+    (commits : Array String) (lowerBoundRef : Option String) : IO PersistedState := do
   if commits.size < 2 then
     throw <| IO.userError "bisect mode requires at least 2 commits"
   let updatedAt ← nowUtcString
@@ -331,6 +334,7 @@ private def mkInitialBisectState (paths : Paths) (strategyScope : String)
     status := .running
     stage := none
     lastLogPath := none
+    lowerBoundRef := lowerBoundRef
     updatedAt := updatedAt
   }
 
@@ -342,12 +346,12 @@ project directory, dependency name, state schema, and execution mode as the
 original run.
 -/
 def loadInitialState (paths : Paths) (config : Config)
-    (commits : Array String) : IO PersistedState := do
+    (commits : Array String) (lowerBoundRef : Option String) : IO PersistedState := do
   match ← State.load? paths with
   | none =>
       match config.runMode with
-      | .linear => mkInitialAdvanceState paths config.strategy.scope commits
-      | .bisect => mkInitialBisectState paths config.strategy.scope commits
+      | .linear => mkInitialAdvanceState paths config.strategy.scope commits lowerBoundRef
+      | .bisect => mkInitialBisectState paths config.strategy.scope commits lowerBoundRef
   | some state =>
       if state.schemaVersion != currentSchemaVersion then
         throw <| IO.userError
