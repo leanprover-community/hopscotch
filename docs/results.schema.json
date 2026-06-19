@@ -115,7 +115,7 @@
     "deprecatedImports": {
       "type": "array",
       "items": { "$ref": "#/$defs/ProposedFix" },
-      "description": "Advisories recorded at the run's conclusion (including fully-successful runs): downstream imports that resolve through a live `deprecated_module` shim in the dependency. They build today but break when the shim is deleted upstream. Not applied by default; `hopscotch fix apply --advisories` opts in (skipping entries with `shimHasDeclarations`)."
+      "description": "Advisories recorded at the run's conclusion (including fully-successful runs): downstream imports that resolve through a live `deprecated_module` shim in the dependency. They build today but break when the shim is deleted upstream. Applied by `hopscotch fix apply` (skipping entries with `shimHasDeclarations`); pass `--no-advisories` to apply only the boundary proposals."
     },
     "detectionNotes": {
       "type": "array",
@@ -224,7 +224,7 @@
         },
         "shimHasDeclarations": {
           "type": "boolean",
-          "description": "True when the source shim also defines declarations (typically `@[deprecated]` compatibility aliases). The import rewrite drops those, so the migration may be partial: downstream code referencing the aliases needs renaming too. `fix apply --advisories` skips such advisories."
+          "description": "True when the source shim also defines declarations (typically `@[deprecated]` compatibility aliases). The import rewrite drops those, so the migration may be partial: downstream code referencing the aliases needs renaming too. `fix apply` skips such advisories."
         }
       }
     }

@@ -34,10 +34,12 @@ structure Config where
   projectDir : System.FilePath := "."
   /-- Optional results.json to read migrations from; defaults to the project's own. -/
   fromPath : Option System.FilePath := none
-  /-- `apply` also performs the deprecated-import advisory migrations (the green-bump
-      hygiene pass), except partial ones — advisories whose shim defines compat
-      aliases would regress a *working* build, so those are skipped loudly. -/
-  includeAdvisories : Bool := false
+  /-- Whether `apply` also performs the deprecated-import advisory migrations (the
+      green-bump hygiene pass). On by default — `fix apply` repairs everything it
+      safely can; `--no-advisories` restricts it to the boundary proposals.
+      Partial advisories (shim defines compat aliases) are skipped regardless,
+      since rewriting those could regress a working build. -/
+  includeAdvisories : Bool := true
 
 /-- Read the proposed migrations and the deprecated-import advisories out of a
     `results.json` document. -/
@@ -73,9 +75,10 @@ def run (config : Config) (output : String → IO Unit := IO.println) : IO UInt3
       return 0
   | .apply =>
       -- Boundary-fixing proposals always apply (the build is already broken).
-      -- With `--advisories`, deprecated-import migrations apply too — except
-      -- partial ones (shim defines compat aliases): rewriting those can regress
-      -- a *working* build, so they are surfaced and left to a human.
+      -- Deprecated-import advisories apply too by default (`--no-advisories`
+      -- restricts apply to the proposals), except partial ones (shim defines
+      -- compat aliases): rewriting those can regress a working build, so they
+      -- are surfaced and left to a human.
       let mut toApply := migrations
       if config.includeAdvisories then
         for a in advisories do

@@ -131,7 +131,7 @@ Every commit builds. The run exits `0`, `status = fullySuccessful`, and the conc
 ]
 ```
 
-**You do (optionally):** Run `hopscotch fix apply --advisories` to migrate now, for example folded into the same green bump PR, so example 3 never happens to you. Advisories whose shim still defines compatibility aliases are skipped with a message (`shimHasDeclarations = true`); rewriting those could regress a working build.
+**You do (optionally):** Run `hopscotch fix apply` to migrate now, for example folded into the same green bump PR, so example 3 never happens to you. Advisories whose shim still defines compatibility aliases are skipped with a message (`shimHasDeclarations = true`); rewriting those could regress a working build.
 
 ---
 

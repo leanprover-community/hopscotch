@@ -28,7 +28,7 @@ def toolchainUsage : String :=
 
 /-- Shared usage text for `hopscotch fix`. -/
 def fixUsage : String :=
-  "usage: hopscotch fix <apply|revert|list> [--project-dir DIR] [--from RESULTS_JSON] [--advisories]"
+  "usage: hopscotch fix <apply|revert|list> [--project-dir DIR] [--from RESULTS_JSON] [--no-advisories]"
 
 def helpText : String :=
   "hopscotch — binary-search or linearly scan dependency commits to find a regression\n\n" ++
@@ -267,8 +267,8 @@ private def parseFixOptions (config : FixCommand.Config)
       parseFixOptions { config with projectDir := System.FilePath.mk dir } rest
   | "--from" :: path :: rest =>
       parseFixOptions { config with fromPath := some (System.FilePath.mk path) } rest
-  | "--advisories" :: rest =>
-      parseFixOptions { config with includeAdvisories := true } rest
+  | "--no-advisories" :: rest =>
+      parseFixOptions { config with includeAdvisories := false } rest
   | _ =>
       throw <| IO.userError fixUsage
 

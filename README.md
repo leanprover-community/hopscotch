@@ -325,11 +325,11 @@ A `dep` run detects these cases automatically when it concludes. Detection does 
 The `fix` subcommand acts on a recorded `results.json`:
 
 ```
-hopscotch fix <apply|revert|list> [--project-dir DIR] [--from RESULTS_JSON] [--advisories]
+hopscotch fix <apply|revert|list> [--project-dir DIR] [--from RESULTS_JSON] [--no-advisories]
 ```
 
 - **`list`** prints the proposals and advisories.
-- **`apply`** performs the proposed import rewrites, backing each original up under `.lake/hopscotch/autofix-backups/`. With `--advisories` it also migrates the deprecated-but-working imports (skipping any whose shim still defines compatibility aliases, with a message — rewriting those could regress a working build). Migrations are applied by re-scanning the workspace, so `--from` lets you apply a `results.json` produced elsewhere (e.g. by CI) to a fresh checkout, enabling automated "fix breaking changes" PRs from CI.
+- **`apply`** repairs everything it safely can: the proposed import rewrites *and* the deprecated-but-working imports, backing each original up under `.lake/hopscotch/autofix-backups/`. Advisories whose shim still defines compatibility aliases are skipped with a message (rewriting those could regress a working build). Pass `--no-advisories` to apply only the boundary-repairing proposals. Migrations are applied by re-scanning the workspace, so `--from` lets you apply a `results.json` produced elsewhere (e.g. by CI) to a fresh checkout, enabling automated "fix breaking changes" PRs from CI.
 - **`revert`** restores every backed-up original.
 
 A run stops at a reproducible boundary and proposes its fix. You apply it with `hopscotch fix apply`, commit, and run again to search past the repaired breakage. A proposal repairs the import; if the upstream change also renamed declarations your code uses, the follow-up build tells you what remains. The fix PR's CI is the validation step.

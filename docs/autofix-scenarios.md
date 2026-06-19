@@ -9,7 +9,7 @@ A run does not modify the downstream workspace. When a run concludes, detection 
 | Result | Meaning | When recorded | Applied by |
 |---|---|---|---|
 | Proposal (`proposedFixes`) | A migration that repairs the failure boundary | Only when the run stopped (exit 1) | `hopscotch fix apply` |
-| Advisory (`deprecatedImports`) | An import that works today but resolves through a live `deprecated_module` shim and will break when the shim is deleted upstream | Any conclusion, including fully-green runs | `hopscotch fix apply --advisories` (opt-in) |
+| Advisory (`deprecatedImports`) | An import that works today but resolves through a live `deprecated_module` shim and will break when the shim is deleted upstream | Any conclusion, including fully-green runs | `hopscotch fix apply` (skip with `--no-advisories`) |
 
 Multi-breakage ranges are handled iteratively: each run reports one reproducible boundary plus its fix when one is known. Apply the fix, commit, re-run, and repeat. The CI that applies the fix validates the repair — hopscotch does not pre-validate a proposal by building.
 
@@ -69,7 +69,7 @@ Every blob source must actually contain a top-level `deprecated_module` command 
 | Flag | Meaning | Effect |
 |---|---|---|
 | `newModules = []` | The shim re-exports nothing | `fix apply` deletes the import line |
-| `shimHasDeclarations = true` | The source shim also defines declarations (compat aliases) that an import rewrite drops | Rendered with a `[partial]` marker; `fix apply --advisories` skips these with a message (rewriting could regress a working build); proposals still apply (the build was already broken) |
+| `shimHasDeclarations = true` | The source shim also defines declarations (compat aliases) that an import rewrite drops | Rendered with a `[partial]` marker; `fix apply` skips these advisories with a message (rewriting could regress a working build); proposals still apply (the build was already broken) |
 
 ## What a run reports
 
@@ -83,9 +83,9 @@ Exit codes are unchanged by detection. Automation should branch on the JSON fiel
 
 ## Consumer playbook (CI updater, e.g. downstream-reports)
 
-1. Exit 1, `proposedFixes` non-empty: open a "fix breaking changes" PR. Run `hopscotch fix apply --from results.json`, commit, and bump the rev. The PR's CI validates the repair. The next scheduled run searches past the repaired breakage.
+1. Exit 1, `proposedFixes` non-empty: open a "fix breaking changes" PR. Run `hopscotch fix apply --no-advisories --from results.json` for a surgical, break-only PR (drop the flag to also fold in deprecation hygiene), commit, and bump the rev. The PR's CI validates the repair. The next scheduled run searches past the repaired breakage.
 2. Exit 1, `proposedFixes` empty: a genuine breaking change. Open an issue with `firstFailingCommit`, the culprit log, and any `detectionNotes` (e.g. "deleted with no replacement shim").
-3. Exit 0, `deprecatedImports` non-empty: optional hygiene PR. Run `hopscotch fix apply --advisories` to migrate the clean entries. Partial ones are skipped with a message and listed for human review. This keeps the downstream off shims before the upstream cleanup occurs.
+3. Exit 0, `deprecatedImports` non-empty: optional hygiene PR. Run `hopscotch fix apply` to migrate the clean entries. Partial ones are skipped with a message and listed for human review. This keeps the downstream off shims before the upstream cleanup occurs.
 4. `hopscotch fix list` inspects both lists. `hopscotch fix revert` restores every original from the backup store (`.lake/hopscotch/autofix-backups/`, which mirrors project-relative paths and is itself the record of what `apply` touched).
 5. Bisect sessions are terminal once stopped. Run `hopscotch clean` (or start a fresh CI checkout) before re-running after a fix. Linear sessions resume in place.
 

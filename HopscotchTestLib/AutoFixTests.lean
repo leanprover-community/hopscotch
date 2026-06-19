@@ -718,7 +718,7 @@ private def «hopscotch fix list/apply/revert round-trips a proposed migration»
     assertTrue ((← IO.FS.readFile (projectDir / "Foo.lean")).contains "import Demo.Old")
       "revert restores the original import"
 
-private def «fix apply --advisories migrates clean advisories, skips partial ones» : IO Unit := do
+private def «fix apply migrates advisories by default; --no-advisories restricts to proposals» : IO Unit := do
   withTempDir "hopscotch-fix-advisories" fun dir => do
     let projectDir := dir / "downstream"
     makeDownstreamProject projectDir
@@ -745,20 +745,21 @@ private def «fix apply --advisories migrates clean advisories, skips partial on
     }
     Hopscotch.Results.writeResults paths none state
 
-    -- Plain apply: proposals only.
-    let code ← Hopscotch.FixCommand.run { action := .apply, projectDir := projectDir } ignoreOutput
-    assertEq 0 code "plain apply succeeds"
+    -- --no-advisories: proposals only; advisories left untouched.
+    let code ← Hopscotch.FixCommand.run
+      { action := .apply, projectDir := projectDir, includeAdvisories := false } ignoreOutput
+    assertEq 0 code "apply --no-advisories succeeds"
     let src ← IO.FS.readFile (projectDir / "Foo.lean")
     assertTrue (src.contains "import Demo.New") "the proposal is applied"
-    assertTrue (src.contains "import Demo.Adv\n") "advisories are untouched by default"
+    assertTrue (src.contains "import Demo.Adv\n") "advisories are untouched under --no-advisories"
+    assertTrue (src.contains "import Demo.Part\n") "advisories are untouched under --no-advisories"
 
-    -- --advisories: clean advisories applied, partial ones skipped loudly.
+    -- Default apply: clean advisories migrated too, partial ones skipped loudly.
     let (out, getLines) ← captureOutput
-    let code2 ← Hopscotch.FixCommand.run
-      { action := .apply, projectDir := projectDir, includeAdvisories := true } out
-    assertEq 0 code2 "apply --advisories succeeds"
+    let code2 ← Hopscotch.FixCommand.run { action := .apply, projectDir := projectDir } out
+    assertEq 0 code2 "plain apply succeeds"
     let src2 ← IO.FS.readFile (projectDir / "Foo.lean")
-    assertTrue (src2.contains "import Demo.Adv2") "the clean advisory is migrated"
+    assertTrue (src2.contains "import Demo.Adv2") "the clean advisory is migrated by default"
     assertTrue (src2.contains "import Demo.Part\n")
       "the partial advisory (shim defines declarations) is left alone"
     assertTrue ((← getLines).any (·.contains "skipping advisory"))
@@ -810,7 +811,7 @@ def suite : TestSuite := #[
   test_case «failure boundary records proposals without retrying or rewriting»,
   test_case «green conclusion hands the last successful build log to detection»,
   test_case «hopscotch fix list/apply/revert round-trips a proposed migration»,
-  test_case «fix apply --advisories migrates clean advisories, skips partial ones»,
+  test_case «fix apply migrates advisories by default; --no-advisories restricts to proposals»,
   test_case «hopscotch fix apply skips unknown fix types»
 ]
 
