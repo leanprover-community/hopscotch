@@ -6,7 +6,7 @@ import Hopscotch.ItemList
 import Hopscotch.GitHub
 import Hopscotch.Results
 import Hopscotch.State
-import Hopscotch.AutoFix
+import Hopscotch.AutoFix.Framework
 import Hopscotch.Util
 
 namespace Hopscotch.Runner
