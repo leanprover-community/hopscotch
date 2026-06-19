@@ -542,7 +542,7 @@ private def «end-to-end linear: boundary proposed, fix applied, re-run finds th
       quiet := true
     }
 
-    -- Run 1: stop honestly at the window commit, with the fix proposed.
+    -- Run 1: stop at the window commit, with the fix proposed.
     let result1 ← Runner.run config ignoreOutput
     assertEq 1 result1.exitCode "the first run stops at the first breaking change"
     let state1 ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")

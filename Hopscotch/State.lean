@@ -109,7 +109,7 @@ structure PersistedState where
       `items`). Used by automated fixes to diff the dependency against a known-good
       baseline. `none` for non-range sources (commits-file, toolchain). -/
   lowerBoundRef : Option String := none
-  /-- Automated fixes *proposed* for the failure boundary after the run stopped.
+  /-- Automated fixes proposed for the failure boundary after the run stopped.
       Never applied by the run itself — the consumer opts in via
       `hopscotch fix apply`. Empty unless `status = stopped`. See `Hopscotch.AutoFix`. -/
   proposedFixes : Array AutoFix.ModuleMigration := #[]

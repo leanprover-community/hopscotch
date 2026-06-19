@@ -71,8 +71,8 @@ private inductive ProbeRunResult where
 
 /--
 After a run concludes, run the registered fixes' detection once and record the
-results on the state: migrations *proposed* for the failure boundary (only when
-the run stopped) and *advisories* for imports that resolve through live
+results on the state: migrations proposed for the failure boundary (only when
+the run stopped) and advisories for imports that resolve through live
 deprecation shims (on any conclusion — a fully-successful run still surfaces
 what will break at the next upstream shim cleanup). Both are surfaced via
 `summary.md` and `results.json`; nothing is applied — applying is the consumer's
@@ -106,9 +106,9 @@ private def attachProposedFixes (config : Config) (paths : Paths)
       deprecatedImports := detected.advisories
       autoFixNotes := detected.notes }
   else
-    -- On a green conclusion nothing needs *fixing*; anything detection still
+    -- On a green conclusion nothing needs fixing; anything detection still
     -- proposed (e.g. a warned deprecation that did not fail this build) is worth
-    -- migrating all the same — fold it into the advisories.
+    -- migrating all the same, so fold it into the advisories.
     return { state with
       proposedFixes := #[]
       deprecatedImports := detected.advisories ++ detected.migrations

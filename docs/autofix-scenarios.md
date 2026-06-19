@@ -85,7 +85,7 @@ Exit codes are unchanged by detection. Automation should branch on the JSON fiel
 
 1. Exit 1, `proposedFixes` non-empty: open a "fix breaking changes" PR. Run `hopscotch fix apply --from results.json`, commit, and bump the rev. The PR's CI validates the repair. The next scheduled run searches past the repaired breakage.
 2. Exit 1, `proposedFixes` empty: a genuine breaking change. Open an issue with `firstFailingCommit`, the culprit log, and any `detectionNotes` (e.g. "deleted with no replacement shim").
-3. Exit 0, `deprecatedImports` non-empty: optional hygiene PR. Run `hopscotch fix apply --advisories` to migrate the clean entries. Partial ones are skipped with a message and listed for a human review. This keeps the downstream off shims before the upstream cleanup occurs.
+3. Exit 0, `deprecatedImports` non-empty: optional hygiene PR. Run `hopscotch fix apply --advisories` to migrate the clean entries. Partial ones are skipped with a message and listed for human review. This keeps the downstream off shims before the upstream cleanup occurs.
 4. `hopscotch fix list` inspects both lists. `hopscotch fix revert` restores every original from the backup store (`.lake/hopscotch/autofix-backups/`, which mirrors project-relative paths and is itself the record of what `apply` touched).
 5. Bisect sessions are terminal once stopped. Run `hopscotch clean` (or start a fresh CI checkout) before re-running after a fix. Linear sessions resume in place.
 

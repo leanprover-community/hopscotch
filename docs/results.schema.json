@@ -110,7 +110,7 @@
     "proposedFixes": {
       "type": "array",
       "items": { "$ref": "#/$defs/ProposedFix" },
-      "description": "Automated fixes proposed for the failure boundary (empty when none, or when the run did not stop). The run never modifies the downstream workspace: each entry is a declarative repair the consumer can opt into with `hopscotch fix apply` (or by editing imports manually), after which a re-run searches past the repaired breakage. An entry with empty `newModules` means the import should simply be removed."
+      "description": "Automated fixes proposed for the failure boundary (empty when none, or when the run did not stop). The run never modifies the downstream workspace: each entry is a declarative repair the consumer can opt into with `hopscotch fix apply` (or by editing imports manually), after which a re-run searches past the repaired breakage. An entry with empty `newModules` means the import should be removed."
     },
     "deprecatedImports": {
       "type": "array",

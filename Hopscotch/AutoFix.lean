@@ -8,49 +8,46 @@ import Hopscotch.Util
 # Automated fixes
 
 Bisecting a downstream project against a fast-moving dependency (mathlib in
-particular) sometimes lands on a commit that fails to build for a reason that has
-nothing to do with the regression being hunted.  The canonical example is a
-**module deprecation performed in two steps**:
+particular) sometimes lands on a commit that fails to build for a reason
+unrelated to the regression being hunted. The common case is a module
+deprecation done in two steps:
 
 1. A PR deletes `Mathlib/Foo/Bar.lean` (the module is split/moved).
-2. A *later* PR re-adds `Mathlib/Foo/Bar.lean` as a `deprecated_module` shim that
+2. A later PR re-adds `Mathlib/Foo/Bar.lean` as a `deprecated_module` shim that
    re-exports the new location(s).
 
-For every commit *between* those two PRs, a downstream `import Mathlib.Foo.Bar`
-fails with an unknown-module error.  The deletion commit a bisect converges on
-is an honest breaking change for the downstream — but one with a known,
-mechanical repair, which is worth reporting alongside the boundary instead of
-leaving the user to rediscover it.
+For every commit between those two PRs, a downstream `import Mathlib.Foo.Bar`
+fails with an unknown-module error. The deletion commit a bisect converges on is
+a real breaking change for the downstream, but one with a known mechanical
+repair worth reporting alongside the boundary.
 
-This module provides a small, extensible framework for **automated fixes** that
-recognize such repairable failures, plus the concrete `module-deprecation` fix.
+This module provides an extensible framework for automated fixes that recognize
+such repairable failures, plus the concrete `module-deprecation` fix.
 
 ## Framework
 
-A run never modifies the downstream sources.  After a bisect/scan concludes at a
-failure boundary, the registered fixes' detection runs **once** against that
-boundary commit; any resulting `ModuleMigration`s are recorded as **proposals**
-(in `PersistedState.proposedFixes`, surfaced via `summary.md` and
-`results.json`).  Applying them is the consumer's choice — `hopscotch fix apply`
-rewrites the workspace, after which a re-run can search past the repaired
-breakage.  Multi-breakage windows are therefore handled iteratively: one honest,
-pristine-reproducible boundary (plus its fix, when one is known) per run.
+A run never modifies the downstream sources. After a bisect/scan concludes at a
+failure boundary, the registered fixes' detection runs once against that
+boundary commit; any resulting `ModuleMigration`s are recorded as proposals (in
+`PersistedState.proposedFixes`, surfaced via `summary.md` and `results.json`).
+Applying them is the consumer's choice: `hopscotch fix apply` rewrites the
+workspace, after which a re-run can search past the repaired breakage.
+Multi-breakage windows are handled iteratively, one reproducible boundary (plus
+its fix, when known) per run.
 
-Detection can also produce **advisories**: migrations for imports that still
-build (they resolve through a live deprecation shim) but will break when the
-dependency deletes the shim.  Advisories are recorded in
-`PersistedState.deprecatedImports` — including on fully-successful runs, turning
-every run into a deprecation audit — but are never applied by `hopscotch fix
-apply`.
+Detection can also produce advisories: migrations for imports that still build
+(they resolve through a live deprecation shim) but will break when the
+dependency deletes the shim. Advisories are recorded in
+`PersistedState.deprecatedImports`, including on fully-successful runs, but are
+never applied by `hopscotch fix apply`.
 
 A fix contributes two functions:
 
-- `detect`   — inspect the concluded run (and the dependency history) and
-  **propose** migrations/advisories.  Detection only: it does not touch the
-  workspace.
+- `detect`   — inspect the concluded run (and the dependency history) and propose
+  migrations/advisories. Detection only: it does not touch the workspace.
 - `applyOne` — apply a single recorded migration to the workspace, idempotently,
-  returning the project-relative files it changed.  Used by `hopscotch fix
-  apply`, never by a run.
+  returning the project-relative files it changed. Used by `hopscotch fix apply`,
+  never by a run.
 
 The framework (`detectFixes`) stamps the owning fix's id on every record.
 -/
@@ -140,9 +137,8 @@ def detectFixes (fixes : Array Fix) (ctx : FixContext)
 
 Before its first rewrite of a downstream source file, `hopscotch fix apply`
 stashes the original under `.lake/hopscotch/autofix-backups/`, mirroring the
-file's project-relative path (injective by construction). The store is itself
-the record of what was touched, which is what makes `hopscotch fix revert`
-migration-agnostic. -/
+file's project-relative path. The store is itself the record of what was
+touched, so `hopscotch fix revert` needs no migration metadata. -/
 
 /-- Root directory of the backup store. -/
 def backupRoot (paths : Paths) : System.FilePath :=
@@ -153,7 +149,7 @@ def backupPath (paths : Paths) (relPath : String) : System.FilePath :=
   backupRoot paths / relPath
 
 /-- Stash `contents` as the backup for `relPath` unless one already exists — the
-    first backup wins, since it holds the pristine original. -/
+    first backup wins, since it holds the original. -/
 def backupFileOnce (paths : Paths) (relPath : String) (contents : String) : IO Unit := do
   let backup := backupPath paths relPath
   unless ← backup.pathExists do
@@ -345,7 +341,7 @@ def deprecationWarnings (log : String) : Array (String × Array String) :=
 
 /-- Rewrite every `import oldModule` line in `contents` to import `newModules`
     instead, preserving each original line's indentation and import keyword.
-    **Empty `newModules` removes the matching import lines** (the migration for a
+    Empty `newModules` removes the matching import lines (the migration for a
     shim that re-exports nothing). Returns `none` when nothing matched (so
     callers can detect a no-op). -/
 def rewriteImports (contents oldModule : String) (newModules : Array String) : Option String := Id.run do
@@ -547,7 +543,7 @@ private def fetchRaw? (owner repo ref path : String) : IO (Option String) := do
 private def shimReplacements (oldModule contents : String) : Array String :=
   (parseShimImports contents).filter (· != oldModule)
 
-/-- Resolve the replacements for `oldModule`, whose file is **missing** at the
+/-- Resolve the replacements for `oldModule`, whose file is missing at the
     boundary commit. Sources in order — each blob source requires the content to
     actually be a `deprecated_module` shim before its imports are trusted:
 
@@ -587,14 +583,13 @@ private def resolveMissing (depDir : System.FilePath) (repo? : Option (String ×
     against the dependency tree at the boundary commit and at the newest range
     commit.
 
-    - Missing at the boundary → **proposal**, when `resolveMissing` can name the
+    - Missing at the boundary → proposal, when `resolveMissing` can name the
       replacement (or name "remove the import" for an empty shim); otherwise a
       genuine-removal note.
-    - Present but resolving through a live `deprecated_module` shim →
-      **advisory** (builds today, breaks at the upstream shim cleanup) — promoted
-      to a proposal when the build log carries the toolchain's deprecation
-      warning for it (the warnings-as-error regime, where the warning itself
-      failed the build). -/
+    - Present but resolving through a live `deprecated_module` shim → advisory
+      (builds today, breaks at the upstream shim cleanup), promoted to a proposal
+      when the build log carries the toolchain's deprecation warning for it (the
+      warnings-as-error regime, where the warning itself failed the build). -/
 private def detect (ctx : FixContext) : IO DetectResult := do
   let some depDir ← resolveDepCheckout? ctx.projectDir ctx.dependencyName
     | return {}

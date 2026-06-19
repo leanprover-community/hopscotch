@@ -24,7 +24,7 @@ open Lean
     backward-incompatible change to the fields below. -/
 def resultsSchemaVersion : Nat := 2
 
-/-- One automated fix *proposed* for the failure boundary, as surfaced in
+/-- One automated fix proposed for the failure boundary, as surfaced in
     `results.json`. Never applied by the run; `hopscotch fix apply` opts in. -/
 structure AutoFixJson where
   fixId               : String

@@ -29,7 +29,7 @@ deprecated_module (since := "…")
 
 ## 1. Culprit is the deletion; the shim lands later in the range
 
-The classic two-step deprecation, fully contained in the tested range.
+The two-step deprecation, fully contained in the tested range.
 
 ```
 c0 ── c1 ──────────────── c2 ─────────────── c3
