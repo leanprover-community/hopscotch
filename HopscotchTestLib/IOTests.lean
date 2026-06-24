@@ -809,6 +809,116 @@ private def «strip GITHUB_TOKEN from lake child env» : IO Unit := do
       assertEq "GITHUB_TOKEN=(unset)" line
         "lake child observed GITHUB_TOKEN in its environment"
 
+/-- Scenario: with `--test` enabled, a commit that builds but fails `lake test` stops the run
+    at the test stage and counts as a failed hop. -/
+private def «lake test failure counts as a failed hop» : IO Unit := do
+  withTempDir "hopscotch-fail-test" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\nbadtest\ngood2\n"
+    configureMockLake projectDir "fail-test"
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) (runTest := true)
+      quiet := true
+    } ignoreOutput
+    assertEq 1 result.exitCode "a failing lake test should stop the run"
+    let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
+    assertEq (.stopped) state.status "state should record failure"
+    assertEq (some "badtest") state.currentCommit "state should record the test-failing commit"
+    assertEq (some RunStage.test) state.stage
+      "state should record the test stage as the failure point"
+    -- The build step runs before the test step, and the run stops at the first failing test.
+    let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
+    assertEq
+      ["update:good1", "build:good1", "test:good1", "update:badtest", "build:badtest", "test:badtest"]
+      calls
+      "build should run before test, and the run should stop at the first failing test"
+    let resultsPath := projectDir / ".lake" / "hopscotch" / "results.json"
+    let results ← readJsonFile (α := Hopscotch.Results.ResultsJson) resultsPath
+    assertEq (some "lake test") results.failureStage
+      "results.json should expose the test failure stage"
+
+/-- Scenario: with `--lint` enabled, a commit that builds but fails `lake lint` stops the run
+    at the lint stage; no test step runs when only `--lint` is set. -/
+private def «lake lint failure counts as a failed hop» : IO Unit := do
+  withTempDir "hopscotch-fail-lint" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\nbadlint\n"
+    configureMockLake projectDir "fail-lint"
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) (runLint := true)
+      quiet := true
+    } ignoreOutput
+    assertEq 1 result.exitCode "a failing lake lint should stop the run"
+    let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
+    assertEq (some RunStage.lint) state.stage
+      "state should record the lint stage as the failure point"
+    assertEq (some "badlint") state.currentCommit "state should record the lint-failing commit"
+    let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
+    assertEq
+      ["update:good1", "build:good1", "lint:good1", "update:badlint", "build:badlint", "lint:badlint"]
+      calls
+      "lint runs after build; no test step runs when only --lint is enabled"
+
+/-- Scenario: with both `--test` and `--lint`, each commit runs build → test → lint in order. -/
+private def «build, test, and lint run in order for each commit» : IO Unit := do
+  withTempDir "hopscotch-build-test-lint" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\n"
+    configureMockLake projectDir "success"
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) (runTest := true) (runLint := true)
+      quiet := true
+    } ignoreOutput
+    assertEq 0 result.exitCode "all checks passing should complete the run"
+    let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
+    assertEq (.fullySuccessful) state.status "every check passing should complete the session"
+    let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
+    assertEq ["update:good1", "build:good1", "test:good1", "lint:good1"] calls
+      "each commit should run build, then test, then lint"
+
+/-- Scenario: resuming a session with a different verify set (e.g. dropping `--test`) is rejected,
+    because changing which checks run changes what pass/fail means for already-recorded probes. -/
+private def «reject changed verify steps on resume» : IO Unit := do
+  withTempDir "hopscotch-verify-change" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\nbadbuild\n"
+    configureMockLake projectDir "fail-build"
+    -- First run with the test step enabled stops at the failing build.
+    let _ ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) (runTest := true)
+      quiet := true
+    } ignoreOutput
+    -- Resuming without --test must be rejected with the usual reset hint.
+    try
+      let _ ← Runner.run {
+        itemSource := .file commitListPath
+        projectDir := projectDir
+        strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+        quiet := true
+      } ignoreOutput
+      fail "changing the verify steps on resume should be rejected"
+    catch error =>
+      assertContains "verification steps changed since the last run" error.toString
+        "toggling --test/--lint should require resetting persisted state"
+      assertContains "delete .lake/hopscotch/ to start over" error.toString
+        "the verify-steps rejection should give the reset instruction"
+
 def suite : TestSuite := #[
   test_case «downstream toolchain command resolution»,
   test_case «stop at first build failure»,
@@ -836,6 +946,10 @@ def suite : TestSuite := #[
   test_case «bisect keep last good pins last good commit»,
   test_case «linear keep last good pins last good commit»,
   test_case «skip build: build step not invoked»,
+  test_case «lake test failure counts as a failed hop»,
+  test_case «lake lint failure counts as a failed hop»,
+  test_case «build, test, and lint run in order for each commit»,
+  test_case «reject changed verify steps on resume»,
   test_case «strip GITHUB_TOKEN from lake child env»
 ]
 

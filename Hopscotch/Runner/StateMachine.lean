@@ -287,11 +287,12 @@ def buildBisectAllPassState (base : PersistedState) (bisect : BisectState)
 
 /-- Create the initial persisted state for a fresh linear-mode session. -/
 private def mkInitialAdvanceState (paths : Paths) (strategyScope : String)
-    (commits : Array String) : IO PersistedState := do
+    (verifySteps : Array String) (commits : Array String) : IO PersistedState := do
   let updatedAt ← nowUtcString
   return {
     projectDir := paths.projectDir
     strategyScope := strategyScope
+    verifySteps := some verifySteps
     items := commits
     runMode := .linear
     nextIndex := 0
@@ -305,7 +306,7 @@ private def mkInitialAdvanceState (paths : Paths) (strategyScope : String)
 
 /-- Create the initial persisted state for a fresh bisect session. -/
 private def mkInitialBisectState (paths : Paths) (strategyScope : String)
-    (commits : Array String) : IO PersistedState := do
+    (verifySteps : Array String) (commits : Array String) : IO PersistedState := do
   if commits.size < 2 then
     throw <| IO.userError "bisect mode requires at least 2 commits"
   let updatedAt ← nowUtcString
@@ -320,6 +321,7 @@ private def mkInitialBisectState (paths : Paths) (strategyScope : String)
   return {
     projectDir := paths.projectDir
     strategyScope := strategyScope
+    verifySteps := some verifySteps
     items := commits
     runMode := .bisect
     bisect := some bisect
@@ -343,11 +345,12 @@ original run.
 -/
 def loadInitialState (paths : Paths) (config : Config)
     (commits : Array String) : IO PersistedState := do
+  let verifySteps := config.strategy.verify.map (·.label)
   match ← State.load? paths with
   | none =>
       match config.runMode with
-      | .linear => mkInitialAdvanceState paths config.strategy.scope commits
-      | .bisect => mkInitialBisectState paths config.strategy.scope commits
+      | .linear => mkInitialAdvanceState paths config.strategy.scope verifySteps commits
+      | .bisect => mkInitialBisectState paths config.strategy.scope verifySteps commits
   | some state =>
       if state.schemaVersion != currentSchemaVersion then
         throw <| IO.userError
@@ -361,6 +364,10 @@ def loadInitialState (paths : Paths) (config : Config)
       if state.strategyScope != config.strategy.scope then
         throw <| IO.userError
           "strategy changed since the last run; delete .lake/hopscotch/ to start over"
+      if state.verifySteps != some verifySteps then
+        throw <| IO.userError
+          "verification steps changed since the last run (e.g. toggling --test/--lint); \
+           delete .lake/hopscotch/ to start over"
       if state.runMode != config.runMode then
         throw <| IO.userError
           "run mode changed since the last run; delete .lake/hopscotch/ to start over"

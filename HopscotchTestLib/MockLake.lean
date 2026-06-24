@@ -64,6 +64,8 @@ private def readPinnedRev (projectDir : System.FilePath) : IO String := do
 -- Failure modes written to mockLakeModePath by configureMockLake:
 --   "success"                         — all commands succeed
 --   "fail-build"                       — build fails for revs prefixed "badbuild"
+--   "fail-test"                        — test fails for revs prefixed "badtest" (build still succeeds)
+--   "fail-lint"                        — lint fails for revs prefixed "badlint" (build/test still succeed)
 --   "fail-update"                      — update fails for revs prefixed "badupdate"
 --   "fail-build-and-mutate-toolchain"  — update rewrites lean-toolchain for revs prefixed "mutatetoolchain",
 --                                        then build fails for revs prefixed "badbuild"
@@ -95,6 +97,10 @@ def runMockLake (args : List String) : IO UInt32 := do
     IO.FS.writeFile (projectDir / "lean-toolchain") "leanprover/lean4:v9.9.9\n"
     pure 0
   else if mode == "fail-build" && stage == "build" && rev.startsWith "badbuild" then
+    pure 1
+  else if mode == "fail-test" && stage == "test" && rev.startsWith "badtest" then
+    pure 1
+  else if mode == "fail-lint" && stage == "lint" && rev.startsWith "badlint" then
     pure 1
   else if mode == "fail-build-and-mutate-toolchain" && stage == "build" && rev.startsWith "badbuild" then
     pure 1

@@ -78,14 +78,38 @@ private def runCommand (lakeCommand : String) (projectDir logPath : System.FileP
   IO.ofExcept stderrTask.get
   return { exitCode := exitCode }
 
+/-- One verify step that runs `lake <subcommand>` and treats a zero exit code as success. -/
+private def lakeVerifyStep (lakeCommand subcommand : String) (stage : RunStage) : ProbeStep := {
+  stage := stage
+  label := s!"lake {subcommand}"
+  run := fun projectDir logPath quiet => do
+    let result ← runCommand lakeCommand projectDir logPath #[subcommand] quiet
+    return result.exitCode == 0
+}
+
+/--
+Build the ordered verify steps shared by the lakefile and toolchain strategies.
+
+The mandatory `lake build` step always runs first. `lake test` and `lake lint` are
+appended (in that order) only when requested, so an enabled check that fails ends the
+probe at its own stage and counts the commit/toolchain as bad. Build runs before test,
+and test before lint, so the cheapest signal that something is broken comes first.
+-/
+def mkVerifySteps (lakeCommand : String) (runTest runLint : Bool) : Array ProbeStep :=
+  #[lakeVerifyStep lakeCommand "build" .build]
+    ++ (if runTest then #[lakeVerifyStep lakeCommand "test" .test] else #[])
+    ++ (if runLint then #[lakeVerifyStep lakeCommand "lint" .lint] else #[])
+
 /--
 Build the default lakefile-based run strategy.
 
 The bump step rewrites the dependency rev in the project's lakefile (auto-detecting
 `lakefile.lean` vs `lakefile.toml`) and runs `lake update <dependencyName>` to fetch
-the new version. The verify array holds a single `lake build` step.
+the new version. The verify array runs `lake build`, plus `lake test` / `lake lint`
+when `runTest` / `runLint` are set; a failure at any verify step fails the probe.
 -/
-def lakefileStrategy (dependencyName lakeCommand : String) : RunStrategy := {
+def lakefileStrategy (dependencyName lakeCommand : String)
+    (runTest : Bool := false) (runLint : Bool := false) : RunStrategy := {
   scope := dependencyName
   mkBump := fun version => {
     stage := .bump
@@ -96,13 +120,7 @@ def lakefileStrategy (dependencyName lakeCommand : String) : RunStrategy := {
         #["update", dependencyName] quiet
       return result.exitCode == 0
   }
-  verify := #[{
-    stage := .build
-    label := "lake build"
-    run := fun projectDir logPath quiet => do
-      let result ← runCommand lakeCommand projectDir logPath #["build"] quiet
-      return result.exitCode == 0
-  }]
+  verify := mkVerifySteps lakeCommand runTest runLint
   defaultFromRef := fun projectDir => do
     -- Prefer the manifest's resolved SHA over the lakefile's `rev` field: the
     -- lakefile may pin a branch name like `master` while the manifest records the
@@ -128,10 +146,11 @@ def lakefileStrategy (dependencyName lakeCommand : String) : RunStrategy := {
 Build the toolchain run strategy.
 
 The bump step writes the given toolchain string to `lean-toolchain`. The verify
-array holds a single `lake build` step, which will use the just-written toolchain
-via `buildCommand`'s `elan run` resolution.
+array runs `lake build` (plus `lake test` / `lake lint` when requested), each using
+the just-written toolchain via `buildCommand`'s `elan run` resolution.
 -/
-def toolchainStrategy (lakeCommand : String) : RunStrategy := {
+def toolchainStrategy (lakeCommand : String)
+    (runTest : Bool := false) (runLint : Bool := false) : RunStrategy := {
   scope := "toolchain"
   mkBump := fun version => {
     stage := .bump
@@ -141,13 +160,7 @@ def toolchainStrategy (lakeCommand : String) : RunStrategy := {
       IO.FS.writeFile logPath s!"wrote lean-toolchain: {version}\n"
       return true
   }
-  verify := #[{
-    stage := .build
-    label := "lake build"
-    run := fun projectDir logPath quiet => do
-      let result ← runCommand lakeCommand projectDir logPath #["build"] quiet
-      return result.exitCode == 0
-  }]
+  verify := mkVerifySteps lakeCommand runTest runLint
 }
 
 end Hopscotch.Runner
