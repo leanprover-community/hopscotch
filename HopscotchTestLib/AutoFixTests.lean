@@ -128,7 +128,7 @@ private def «shim recognition, comment awareness, and warning parsing» : IO Un
   assertEq #[] (deprecationWarnings "error: unknown module prefix 'Demo.Old'")
     "other quoted text is not mistaken for the warning"
   assertEq "remove import Demo.Old"
-    (ModuleMigration.describe { fixId := "x", oldModule := "Demo.Old", newModules := #[] })
+    (ImportMigration.describe { fixId := "x", oldModule := "Demo.Old", newModules := #[] })
     "empty newModules renders as an import removal"
   -- Shims that still define declarations (compat aliases) mark migrations partial.
   assertTrue (!shimDefinesDeclarations shim) "a pure shim defines nothing"
@@ -141,8 +141,8 @@ private def «shim recognition, comment awareness, and warning parsing» : IO Un
   ]
   assertTrue (shimDefinesDeclarations aliasShim)
     "a shim carrying @[deprecated] aliases is detected"
-  assertTrue ((ModuleMigration.describe
-      { fixId := "x", oldModule := "A", newModules := #["B"], shimHasDeclarations := true
+  assertTrue ((ImportMigration.describe
+      { fixId := "x", oldModule := "A", newModules := #["B"], partialFix := true
       }).contains "[partial")
     "partial migrations carry the marker in their rendering"
 
@@ -158,7 +158,7 @@ private def «backups restore each file's own original (collision regression)» 
     IO.FS.writeFile (projectDir / "Demo" / "Foo.lean") "import Demo.Old\n-- nested original\n"
     IO.FS.writeFile (projectDir / "Demo_Foo.lean") "import Demo.Old\n-- flat original\n"
     let paths ← mkPaths projectDir
-    let m : ModuleMigration :=
+    let m : ImportMigration :=
       { fixId := "module-deprecation", oldModule := "Demo.Old", newModules := #["Demo.New"] }
     let changed ← applyMigrationToWorkspace paths paths.projectDir m
     assertTrue (changed.contains "Demo/Foo.lean" && changed.contains "Demo_Foo.lean")
@@ -467,10 +467,10 @@ private def «a live shim yields an advisory; the warning log promotes it» : IO
     let some adv := advisories.find? (·.oldModule == "Demo.Old")
       | fail "advisory for Demo.Old expected"
     assertEq #["Demo.New"] adv.newModules "the advisory names the replacement"
-    assertTrue (!adv.shimHasDeclarations) "a pure shim is a clean migration"
+    assertTrue (!adv.partialFix) "a pure shim is a clean migration"
     let some part := advisories.find? (·.oldModule == "Demo.Part")
       | fail "advisory for Demo.Part expected"
-    assertTrue part.shimHasDeclarations "the code-carrying shim is flagged partial"
+    assertTrue part.partialFix "the code-carrying shim is flagged partial"
     -- Warnings-as-error regime: the toolchain's warning in the failing log means
     -- the deprecation itself broke the build — promoted to a proposal. A warning
     -- about a module *outside* this dependency (another package's shim) becomes a
@@ -740,7 +740,7 @@ private def «fix apply migrates advisories by default; --no-advisories restrict
       deprecatedImports := #[
         { fixId := "module-deprecation", oldModule := "Demo.Adv", newModules := #["Demo.Adv2"] },
         { fixId := "module-deprecation", oldModule := "Demo.Part", newModules := #["Demo.Part2"]
-          shimHasDeclarations := true }]
+          partialFix := true }]
       updatedAt := "2026-01-01T00:00:00Z"
     }
     Hopscotch.Results.writeResults paths none state

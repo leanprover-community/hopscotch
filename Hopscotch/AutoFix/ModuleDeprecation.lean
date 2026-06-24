@@ -1,5 +1,5 @@
 import Hopscotch.AutoFix.Framework
-import Hopscotch.AutoFix.State
+import Hopscotch.AutoFix.Migration
 import Hopscotch.State
 import Hopscotch.LakefileProcessor
 import Hopscotch.GitHub
@@ -250,7 +250,7 @@ to the migration's `newModules`. Backs up each file (once) before its first
 rewrite. Returns the project-relative paths of the files that changed.
 -/
 def applyMigrationToWorkspace (paths : Paths) (projectDir : System.FilePath)
-    (m : ModuleMigration) : IO (Array String) := do
+    (m : ImportMigration) : IO (Array String) := do
   let files ← collectLeanFiles projectDir
   let mut changedFiles : Array String := #[]
   for file in files do
@@ -399,7 +399,7 @@ private def shimReplacements (oldModule contents : String) : Array String :=
        landed beyond the range).
 
     Returns the replacements plus whether the source shim also defines
-    declarations (a partial fix; see `ModuleMigration.shimHasDeclarations`).
+    declarations (a partial fix; see `ImportMigration.partialFix`).
     `some (#[], _)` means the shim re-exports nothing — drop the import. `none`
     means a genuine removal: propose nothing. -/
 private def resolveMissing (depDir : System.FilePath) (repo? : Option (String × String))
@@ -422,6 +422,18 @@ private def resolveMissing (depDir : System.FilePath) (repo? : Option (String ×
         if isDeprecatedModuleShim blob then
           return some (shimReplacements oldModule blob, shimDefinesDeclarations blob)
   return none
+
+/-- The reason attached to a partial migration: the shim re-exports the new
+    location(s) but also defines declarations the import rewrite would drop. -/
+private def partialNote : String :=
+  "the shim also defines declarations; referencing code needs renaming"
+
+/-- Build this fix's migration for `oldModule → newModules`, marking it partial
+    (with `partialNote`) when the source shim also defines declarations. -/
+private def mkMigration (oldModule : String) (newModules : Array String)
+    (isPartial : Bool) : ImportMigration :=
+  { fixId, oldModule, newModules,
+    partialFix := isPartial, note := if isPartial then partialNote else "" }
 
 /-- Tree-lookup detection: resolve every dependency module the downstream imports
     against the dependency tree at the boundary commit and at the newest range
@@ -474,8 +486,8 @@ private def detect (ctx : FixContext) : IO DetectResult := do
   let warned := warnings.map (·.1)
   -- `repo?` is only needed for the network fallback; a missing URL is not fatal.
   let repo? ← resolveRepo? ctx.projectDir ctx.dependencyName
-  let mut migrations : Array ModuleMigration := #[]
-  let mut advisories : Array ModuleMigration := #[]
+  let mut migrations : Array ImportMigration := #[]
+  let mut advisories : Array ImportMigration := #[]
   let mut notes : Array String := #[]
   for m in imported do
     let root := (m.splitOn ".").headD m
@@ -485,8 +497,7 @@ private def detect (ctx : FixContext) : IO DetectResult := do
       -- Broken at the boundary commit.
       match ← resolveMissing depDir repo? ctx.baseline newestRef m p with
       | some (newModules, hasDecls) =>
-          migrations := migrations.push
-            { fixId := fixId, oldModule := m, newModules, shimHasDeclarations := hasDecls }
+          migrations := migrations.push (mkMigration m newModules hasDecls)
       | none =>
           notes := notes.push
             s!"{m} is missing in the dependency at the boundary commit and no \
@@ -495,9 +506,7 @@ private def detect (ctx : FixContext) : IO DetectResult := do
       -- Resolves today, but through a deprecation shim at the newest range commit.
       if let some blob ← gitShow? depDir newestRef p then
         if isDeprecatedModuleShim blob then
-          let mig : ModuleMigration :=
-            { fixId := fixId, oldModule := m, newModules := shimReplacements m blob
-              shimHasDeclarations := shimDefinesDeclarations blob }
+          let mig := mkMigration m (shimReplacements m blob) (shimDefinesDeclarations blob)
           if warned.contains m then
             migrations := migrations.push mig
           else
@@ -508,8 +517,7 @@ private def detect (ctx : FixContext) : IO DetectResult := do
       if let some blob ← gitShow? depDir ctx.currentCommit p then
         if isDeprecatedModuleShim blob then
           migrations := migrations.push
-            { fixId := fixId, oldModule := m, newModules := shimReplacements m blob
-              shimHasDeclarations := shimDefinesDeclarations blob }
+            (mkMigration m (shimReplacements m blob) (shimDefinesDeclarations blob))
   -- Deprecation warnings for modules outside this dependency's tree (e.g. another
   -- package's shims): the toolchain printed the replacements itself, so surface
   -- them as advisories verbatim.

@@ -44,7 +44,7 @@ good  deletes Demo/Old    re-adds Demo.Old   (newest)
 ```json
 "proposedFixes": [
   { "fixId": "module-deprecation", "oldModule": "Demo.Old",
-    "newModules": ["Demo.New"], "shimHasDeclarations": false }
+    "newModules": ["Demo.New"], "partialFix": false, "note": "" }
 ]
 ```
 
@@ -105,7 +105,7 @@ good  converts Demo/Old      deletes Demo/Other     ← downstream also
 "proposedFixes": [],
 "deprecatedImports": [
   { "fixId": "module-deprecation", "oldModule": "Demo.Old",
-    "newModules": ["Demo.New"], "shimHasDeclarations": false }
+    "newModules": ["Demo.New"], "partialFix": false, "note": "" }
 ]
 ```
 
@@ -127,11 +127,11 @@ Every commit builds. The run exits `0`, `status = fullySuccessful`, and the conc
 "proposedFixes": [],
 "deprecatedImports": [
   { "fixId": "module-deprecation", "oldModule": "Demo.Old",
-    "newModules": ["Demo.New"], "shimHasDeclarations": false }
+    "newModules": ["Demo.New"], "partialFix": false, "note": "" }
 ]
 ```
 
-**You do (optionally):** Run `hopscotch fix apply` to migrate now, for example folded into the same green bump PR, so example 3 never happens to you. Advisories whose shim still defines compatibility aliases are skipped with a message (`shimHasDeclarations = true`); rewriting those could regress a working build.
+**You do (optionally):** Run `hopscotch fix apply` to migrate now, for example folded into the same green bump PR, so example 3 never happens to you. Advisories whose shim still defines compatibility aliases are skipped with a message (`partialFix = true`); rewriting those could regress a working build.
 
 ---
 

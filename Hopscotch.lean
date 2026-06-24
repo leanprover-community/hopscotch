@@ -1,7 +1,7 @@
 -- This module serves as the root of the `Hopscotch` library.
 -- Import modules here that should be built as part of the library.
 import Hopscotch.ItemList
-import Hopscotch.AutoFix.State
+import Hopscotch.AutoFix.Migration
 import Hopscotch.AutoFix.Framework
 import Hopscotch.AutoFix.ModuleDeprecation
 import Hopscotch.AutoFix

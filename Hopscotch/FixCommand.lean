@@ -37,14 +37,14 @@ structure Config where
   /-- Whether `apply` also performs the deprecated-import advisory migrations (the
       green-bump hygiene pass). On by default — `fix apply` repairs everything it
       safely can; `--no-advisories` restricts it to the boundary proposals.
-      Partial advisories (shim defines compat aliases) are skipped regardless,
-      since rewriting those could regress a working build. -/
+      Partial advisories (`partialFix`) are skipped regardless, since rewriting
+      those could regress a working build. -/
   includeAdvisories : Bool := true
 
 /-- Read the proposed migrations and the deprecated-import advisories out of a
     `results.json` document. -/
 private def loadMigrations (resultsPath : System.FilePath)
-    : IO (Array ModuleMigration × Array ModuleMigration) := do
+    : IO (Array ImportMigration × Array ImportMigration) := do
   let results ← readJsonFile (α := Results.ResultsJson) resultsPath
   return (results.proposedFixes.map Results.AutoFixJson.toMigration,
           results.deprecatedImports.map Results.AutoFixJson.toMigration)
@@ -82,9 +82,11 @@ def run (config : Config) (output : String → IO Unit := IO.println) : IO UInt3
       let mut toApply := migrations
       if config.includeAdvisories then
         for a in advisories do
-          if a.shimHasDeclarations then
-            output s!"skipping advisory [{a.fixId}] {a.oldModule}: the shim also defines \
-                      declarations; migrate the referencing code manually"
+          if a.partialFix then
+            let reason := if a.note.isEmpty then
+                "applying it may be incomplete; migrate the referencing code manually"
+              else a.note
+            output s!"skipping advisory [{a.fixId}] {a.oldModule}: {reason}"
           else
             toApply := toApply.push a
       if toApply.isEmpty then

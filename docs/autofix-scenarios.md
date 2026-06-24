@@ -69,7 +69,7 @@ Every blob source must actually contain a top-level `deprecated_module` command 
 | Flag | Meaning | Effect |
 |---|---|---|
 | `newModules = []` | The shim re-exports nothing | `fix apply` deletes the import line |
-| `shimHasDeclarations = true` | The source shim also defines declarations (compat aliases) that an import rewrite drops | Rendered with a `[partial]` marker; `fix apply` skips these advisories with a message (rewriting could regress a working build); proposals still apply (the build was already broken) |
+| `partialFix = true` | The source shim also defines declarations (compat aliases) that an import rewrite drops | Rendered with a `[partial]` marker; `fix apply` skips these advisories with a message (rewriting could regress a working build); proposals still apply (the build was already broken) |
 
 ## What a run reports
 

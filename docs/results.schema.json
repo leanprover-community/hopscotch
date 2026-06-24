@@ -115,7 +115,7 @@
     "deprecatedImports": {
       "type": "array",
       "items": { "$ref": "#/$defs/ProposedFix" },
-      "description": "Advisories recorded at the run's conclusion (including fully-successful runs): downstream imports that resolve through a live `deprecated_module` shim in the dependency. They build today but break when the shim is deleted upstream. Applied by `hopscotch fix apply` (skipping entries with `shimHasDeclarations`); pass `--no-advisories` to apply only the boundary proposals."
+      "description": "Advisories recorded at the run's conclusion (including fully-successful runs): downstream imports that resolve through a live `deprecated_module` shim in the dependency. They build today but break when the shim is deleted upstream. Applied by `hopscotch fix apply` (skipping entries with `partialFix`); pass `--no-advisories` to apply only the boundary proposals."
     },
     "detectionNotes": {
       "type": "array",
@@ -206,7 +206,7 @@
     },
     "ProposedFix": {
       "type": "object",
-      "required": ["fixId", "oldModule", "newModules", "shimHasDeclarations"],
+      "required": ["fixId", "oldModule", "newModules", "partialFix", "note"],
       "additionalProperties": false,
       "properties": {
         "fixId": {
@@ -222,9 +222,13 @@
           "items": { "type": "string" },
           "description": "The replacement module(s) the deprecation shim re-exports, in import order. Empty means the shim re-exports nothing: the import should be removed."
         },
-        "shimHasDeclarations": {
+        "partialFix": {
           "type": "boolean",
-          "description": "True when the source shim also defines declarations (typically `@[deprecated]` compatibility aliases). The import rewrite drops those, so the migration may be partial: downstream code referencing the aliases needs renaming too. `fix apply` skips such advisories."
+          "description": "True when applying the migration may be incomplete: the rewrite repairs the import, but referencing code might still need manual changes (e.g. the source also defined `@[deprecated]` compatibility aliases the rewrite drops). `fix apply` skips such advisories; see `note` for the reason."
+        },
+        "note": {
+          "type": "string",
+          "description": "Human reason a migration is partial, supplied by the producing fix; empty string when the migration is not partial."
         }
       }
     }
@@ -286,7 +290,8 @@
             "Mathlib.Topology.Algebra.Module.ContinuousLinearMap.Basic",
             "Mathlib.Topology.Algebra.Module.ContinuousLinearMap.Idempotent"
           ],
-          "shimHasDeclarations": false
+          "partialFix": false,
+          "note": ""
         }
       ],
       "deprecatedImports": [
@@ -294,7 +299,8 @@
           "fixId": "module-deprecation",
           "oldModule": "Mathlib.Data.Real.Sqrt",
           "newModules": ["Mathlib.Analysis.SpecialFunctions.Sqrt"],
-          "shimHasDeclarations": false
+          "partialFix": false,
+          "note": ""
         }
       ],
       "detectionNotes": [],

@@ -1,7 +1,7 @@
 import Lean
 import Lean.Data.Json.FromToJson
 import Hopscotch.Util
-import Hopscotch.AutoFix.State
+import Hopscotch.AutoFix.Migration
 
 namespace Hopscotch.State
 
@@ -112,12 +112,12 @@ structure PersistedState where
   /-- Automated fixes proposed for the failure boundary after the run stopped.
       Never applied by the run itself — the consumer opts in via
       `hopscotch fix apply`. Empty unless `status = stopped`. See `Hopscotch.AutoFix`. -/
-  proposedFixes : Array AutoFix.ModuleMigration := #[]
+  proposedFixes : Array AutoFix.ImportMigration := #[]
   /-- Advisories recorded when the run concluded: downstream imports that resolve
       through a live `deprecated_module` shim in the dependency — they build
       today but break when the shim is deleted upstream. Informational; not
       applied by `hopscotch fix apply`. -/
-  deprecatedImports : Array AutoFix.ModuleMigration := #[]
+  deprecatedImports : Array AutoFix.ImportMigration := #[]
   /-- Notes from automated-fix detection at the run's conclusion — e.g. a module
       that was deleted with no replacement shim, so no fix could be proposed.
       Rendered in `summary.md` and exported as `detectionNotes` in `results.json`. -/

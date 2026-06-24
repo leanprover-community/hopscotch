@@ -30,21 +30,23 @@ structure AutoFixJson where
   fixId               : String
   oldModule           : String
   newModules          : Array String
-  /-- The source shim also defines declarations (compat aliases) the rewrite
-      drops: the migration may be partial. See `ModuleMigration.shimHasDeclarations`. -/
-  shimHasDeclarations : Bool
+  /-- Applying the migration may be incomplete (e.g. the source also defined
+      declarations the rewrite drops). See `ImportMigration.partialFix`. -/
+  partialFix : Bool
+  /-- Human reason the migration is partial; empty when it is not. -/
+  note : String
   deriving ToJson, FromJson, Repr, BEq, Inhabited
 
 /-- Encode a proposed migration for `results.json`. Inverse of `toMigration`. -/
-def AutoFixJson.ofMigration (m : AutoFix.ModuleMigration) : AutoFixJson :=
+def AutoFixJson.ofMigration (m : AutoFix.ImportMigration) : AutoFixJson :=
   { fixId := m.fixId, oldModule := m.oldModule, newModules := m.newModules
-    shimHasDeclarations := m.shimHasDeclarations }
+    partialFix := m.partialFix, note := m.note }
 
 /-- Decode a `results.json` entry back into the runner's migration record, e.g.
     for application by `hopscotch fix`. Inverse of `ofMigration`. -/
-def AutoFixJson.toMigration (a : AutoFixJson) : AutoFix.ModuleMigration :=
+def AutoFixJson.toMigration (a : AutoFixJson) : AutoFix.ImportMigration :=
   { fixId := a.fixId, oldModule := a.oldModule, newModules := a.newModules
-    shimHasDeclarations := a.shimHasDeclarations }
+    partialFix := a.partialFix, note := a.note }
 
 /-- One cached bisect probe outcome, as surfaced in `results.json`. -/
 structure ProbeResultJson where

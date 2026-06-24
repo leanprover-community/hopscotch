@@ -1,4 +1,4 @@
-import Hopscotch.AutoFix.State
+import Hopscotch.AutoFix.Migration
 import Hopscotch.State
 import Hopscotch.Util
 
@@ -12,7 +12,7 @@ repairs. The concrete fixes live in sibling modules (e.g.
 
 A run never modifies the downstream sources. After a bisect/scan concludes at a
 failure boundary, the registered fixes' detection runs once against that
-boundary commit; any resulting `ModuleMigration`s are recorded as proposals (in
+boundary commit; any resulting `ImportMigration`s are recorded as proposals (in
 `PersistedState.proposedFixes`, surfaced via `summary.md` and `results.json`).
 Applying them is the consumer's choice: `hopscotch fix apply` rewrites the
 workspace, after which a re-run can search past the repaired breakage.
@@ -68,10 +68,10 @@ structure FixContext where
     for the console/log. -/
 structure DetectResult where
   /-- Migrations that repair the failure boundary. -/
-  migrations : Array ModuleMigration := #[]
+  migrations : Array ImportMigration := #[]
   /-- Migrations for imports that resolve through a live deprecation shim:
       they build today but break when the dependency deletes the shim. -/
-  advisories : Array ModuleMigration := #[]
+  advisories : Array ImportMigration := #[]
   notes : Array String := #[]
 
 /-- One automated fix in the registry. (Named `Fix` rather than `AutoFix` to avoid
@@ -87,9 +87,9 @@ structure Fix where
   /-- Apply one recorded migration to the workspace (idempotent). Returns the
       project-relative files it changed. Used by `hopscotch fix apply`, never by
       a run. -/
-  applyOne : Paths → System.FilePath → ModuleMigration → IO (Array String)
+  applyOne : Paths → System.FilePath → ImportMigration → IO (Array String)
   /-- One-line human rendering of one of this fix's migrations. -/
-  render : ModuleMigration → String := ModuleMigration.describe
+  render : ImportMigration → String := ImportMigration.describe
 
 /-! ## Orchestration -/
 
