@@ -78,12 +78,36 @@ private def runCommand (lakeCommand : String) (projectDir logPath : System.FileP
   IO.ofExcept stderrTask.get
   return { exitCode := exitCode }
 
-/-- One verify step that runs `lake <subcommand>` and treats a zero exit code as success. -/
+/-- One verify step that runs `lake <subcommand>` and treats a zero exit code as success.
+
+    On failure we make a *best-effort* attempt to short-circuit the run when the
+    downstream project simply has no `<subcommand>` driver configured (`lake test` /
+    `lake lint` print `no <test|lint> driver configured` and exit non-zero). That
+    misconfiguration fails identically on every commit/toolchain, so without this the
+    tool would grind through an entire scan/bisect and then report a bogus boundary;
+    instead we abort the whole run as a tool error (exit 2) with an actionable message.
+
+    This is intentionally a log substring match rather than a precise query. Lake does
+    expose `lake check-test` / `lake check-lint`, but they only exist from ~v4.12 and a
+    non-zero exit from them is ambiguous (e.g. an older toolchain rejects a newer
+    `lake-manifest.json` for reasons unrelated to drivers), so they are not reliable
+    across the toolchain range a single run may probe. Matching the message Lake
+    actually emitted is precise about *why this probe* failed; the match is best-effort,
+    and a miss simply falls back to recording an ordinary failed hop — it never causes a
+    false positive on a genuine test/lint failure. -/
 private def lakeVerifyStep (lakeCommand subcommand : String) (stage : RunStage) : ProbeStep := {
   stage := stage
   label := s!"lake {subcommand}"
   run := fun projectDir logPath quiet => do
     let result ← runCommand lakeCommand projectDir logPath #[subcommand] quiet
+    if result.exitCode != 0 then
+      let log ← IO.FS.readFile logPath
+      if log.contains s!"no {subcommand} driver configured" then
+        throw <| IO.userError
+          s!"`lake {subcommand}` reports no {subcommand} driver configured in the downstream \
+             project, so --{subcommand} can never pass (it fails identically on every probe). \
+             Configure a {subcommand} driver (a `@[{subcommand}_driver]` script/exe, or the \
+             `{subcommand}Driver` lakefile field) or drop --{subcommand}. See {logPath}"
     return result.exitCode == 0
 }
 

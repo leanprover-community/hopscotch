@@ -66,6 +66,8 @@ private def readPinnedRev (projectDir : System.FilePath) : IO String := do
 --   "fail-build"                       — build fails for revs prefixed "badbuild"
 --   "fail-test"                        — test fails for revs prefixed "badtest" (build still succeeds)
 --   "fail-lint"                        — lint fails for revs prefixed "badlint" (build/test still succeed)
+--   "missing-driver"                   — test/lint emit Lake's "no <test|lint> driver configured" error and fail
+--                                        (build/update still succeed); exercises the no-driver short-circuit
 --   "fail-update"                      — update fails for revs prefixed "badupdate"
 --   "fail-build-and-mutate-toolchain"  — update rewrites lean-toolchain for revs prefixed "mutatetoolchain",
 --                                        then build fails for revs prefixed "badbuild"
@@ -101,6 +103,10 @@ def runMockLake (args : List String) : IO UInt32 := do
   else if mode == "fail-test" && stage == "test" && rev.startsWith "badtest" then
     pure 1
   else if mode == "fail-lint" && stage == "lint" && rev.startsWith "badlint" then
+    pure 1
+  else if mode == "missing-driver" && (stage == "test" || stage == "lint") then
+    -- Mirror the real Lake message so the runner's no-driver short-circuit can match it.
+    IO.eprintln s!"error: mock: no {stage} driver configured"
     pure 1
   else if mode == "fail-build-and-mutate-toolchain" && stage == "build" && rev.startsWith "badbuild" then
     pure 1

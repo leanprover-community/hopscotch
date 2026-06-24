@@ -919,6 +919,34 @@ private def «reject changed verify steps on resume» : IO Unit := do
       assertContains "delete .lake/hopscotch/ to start over" error.toString
         "the verify-steps rejection should give the reset instruction"
 
+/-- Scenario: when the downstream project has no test driver configured (`lake test` exits
+    non-zero with "no test driver configured"), the run aborts as a tool error rather than
+    recording the first commit as a spurious failed hop. -/
+private def «missing test driver aborts the run instead of reporting a culprit» : IO Unit := do
+  withTempDir "hopscotch-missing-driver" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\ngood2\n"
+    configureMockLake projectDir "missing-driver"
+    try
+      let _ ← Runner.run {
+        itemSource := .file commitListPath
+        projectDir := projectDir
+        strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) (runTest := true)
+        quiet := true
+      } ignoreOutput
+      fail "a missing test driver should abort the run, not record a failed hop"
+    catch error =>
+      assertContains "no test driver configured" error.toString
+        "the run should abort with a clear no-driver message"
+      assertContains "drop --test" error.toString
+        "the no-driver message should suggest configuring a driver or dropping the flag"
+    -- The run aborted before recording any boundary: state stays running, not stopped.
+    let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
+    assertEq (.running) state.status
+      "a no-driver abort should not record a spurious stopped/culprit state"
+
 def suite : TestSuite := #[
   test_case «downstream toolchain command resolution»,
   test_case «stop at first build failure»,
@@ -949,6 +977,7 @@ def suite : TestSuite := #[
   test_case «lake test failure counts as a failed hop»,
   test_case «lake lint failure counts as a failed hop»,
   test_case «build, test, and lint run in order for each commit»,
+  test_case «missing test driver aborts the run instead of reporting a culprit»,
   test_case «reject changed verify steps on resume»,
   test_case «strip GITHUB_TOKEN from lake child env»
 ]
