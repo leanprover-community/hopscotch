@@ -80,21 +80,15 @@ private def runCommand (lakeCommand : String) (projectDir logPath : System.FileP
 
 /-- One verify step that runs `lake <subcommand>` and treats a zero exit code as success.
 
-    On failure we make a *best-effort* attempt to short-circuit the run when the
-    downstream project simply has no `<subcommand>` driver configured (`lake test` /
-    `lake lint` print `no <test|lint> driver configured` and exit non-zero). That
-    misconfiguration fails identically on every commit/toolchain, so without this the
-    tool would grind through an entire scan/bisect and then report a bogus boundary;
-    instead we abort the whole run as a tool error (exit 2) with an actionable message.
+    If the step fails with no `<subcommand>` driver configured (`lake test` / `lake lint`
+    print `no <test|lint> driver configured` and exit non-zero), abort the whole run as a
+    tool error instead of recording a failed hop: that misconfiguration fails on every
+    commit/toolchain, so the search would otherwise report a bogus boundary.
 
-    This is intentionally a log substring match rather than a precise query. Lake does
-    expose `lake check-test` / `lake check-lint`, but they only exist from ~v4.12 and a
-    non-zero exit from them is ambiguous (e.g. an older toolchain rejects a newer
-    `lake-manifest.json` for reasons unrelated to drivers), so they are not reliable
-    across the toolchain range a single run may probe. Matching the message Lake
-    actually emitted is precise about *why this probe* failed; the match is best-effort,
-    and a miss simply falls back to recording an ordinary failed hop — it never causes a
-    false positive on a genuine test/lint failure. -/
+    Detection is a best-effort log match, not a `lake check-test` / `check-lint` query:
+    those commands only exist from ~v4.12, and a non-zero exit from them is ambiguous
+    (e.g. an old toolchain rejecting a newer lake-manifest.json), so they are unreliable
+    across the toolchain range a run may probe. A missed match falls back to a failed hop. -/
 private def lakeVerifyStep (lakeCommand subcommand : String) (stage : RunStage) : ProbeStep := {
   stage := stage
   label := s!"lake {subcommand}"
@@ -104,20 +98,18 @@ private def lakeVerifyStep (lakeCommand subcommand : String) (stage : RunStage) 
       let log ← IO.FS.readFile logPath
       if log.contains s!"no {subcommand} driver configured" then
         throw <| IO.userError
-          s!"`lake {subcommand}` reports no {subcommand} driver configured in the downstream \
-             project, so --{subcommand} can never pass (it fails identically on every probe). \
-             Configure a {subcommand} driver (a `@[{subcommand}_driver]` script/exe, or the \
-             `{subcommand}Driver` lakefile field) or drop --{subcommand}. See {logPath}"
+          s!"no {subcommand} driver configured, so --{subcommand} can never pass. Add a \
+             {subcommand} driver (`@[{subcommand}_driver]` or the `{subcommand}Driver` lakefile \
+             field) or drop --{subcommand}. See {logPath}"
     return result.exitCode == 0
 }
 
 /--
 Build the ordered verify steps shared by the lakefile and toolchain strategies.
 
-The mandatory `lake build` step always runs first. `lake test` and `lake lint` are
-appended (in that order) only when requested, so an enabled check that fails ends the
-probe at its own stage and counts the commit/toolchain as bad. Build runs before test,
-and test before lint, so the cheapest signal that something is broken comes first.
+`lake build` always runs first; `lake test` and `lake lint` are appended (in that order)
+when requested. A failing step ends the probe at its own stage, marking the
+commit/toolchain bad.
 -/
 def mkVerifySteps (lakeCommand : String) (runTest runLint : Bool) : Array ProbeStep :=
   #[lakeVerifyStep lakeCommand "build" .build]

@@ -830,7 +830,6 @@ private def «lake test failure counts as a failed hop» : IO Unit := do
     assertEq (some "badtest") state.currentCommit "state should record the test-failing commit"
     assertEq (some RunStage.test) state.stage
       "state should record the test stage as the failure point"
-    -- The build step runs before the test step, and the run stops at the first failing test.
     let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
     assertEq
       ["update:good1", "build:good1", "test:good1", "update:badtest", "build:badtest", "test:badtest"]

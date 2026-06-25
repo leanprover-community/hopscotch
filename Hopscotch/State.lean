@@ -98,17 +98,14 @@ structure PersistedState where
   schemaVersion : Nat := currentSchemaVersion
   projectDir : System.FilePath
   strategyScope : String
-  /-- Labels of the verify steps configured for this run, in order
-      (e.g. `#["lake build", "lake test"]`). Captured so that resuming with a
-      different validation set — for instance toggling `--test` / `--lint` — is
-      rejected: changing which checks run changes what "pass"/"fail" means for a
-      probe, which would corrupt the meaning of already-recorded results.
+  /-- Verify-step labels for this run, in order (e.g. `#["lake build", "lake test"]`).
+      Recorded so resuming with a different set (e.g. toggling `--test`/`--lint`) is
+      rejected: changing which checks run changes what pass/fail means for past probes.
 
-      Modelled as `Option` (rather than a bare `Array` with a default) so that a
-      `state.json` written before this field existed still *parses* — the derived
-      `FromJson` only treats `Option` fields as optional — letting the
-      `schemaVersion` check report the friendly "delete .lake/hopscotch/" message
-      instead of a raw JSON parse error. Always `some` in states this version writes. -/
+      `Option` rather than a defaulted `Array` so a `state.json` predating this field
+      still parses (derived `FromJson` only treats `Option` fields as optional), letting
+      the `schemaVersion` check report its reset hint instead of a parse error. Always
+      `some` in states this version writes. -/
   verifySteps : Option (Array String) := none
   items : Array String
   runMode : RunMode := .linear
