@@ -12,6 +12,8 @@ private def failureStageLine (stage : Option RunStage) : String :=
   match stage with
   | some .bump => "Failure stage: lake update"
   | some .build => "Failure stage: lake build"
+  | some .test => "Failure stage: lake test"
+  | some .lint => "Failure stage: lake lint"
   | some .gitCheck => "Failure stage: git cleanliness check"
   | none => "Failure stage: unknown"
 
@@ -74,6 +76,8 @@ def summaryText (state : PersistedState) : String :=
           match state.stage with
           | some .bump => "Stage: lake update"
           | some .build => "Stage: lake build"
+          | some .test => "Stage: lake test"
+          | some .lint => "Stage: lake lint"
           | some .gitCheck => "Stage: git cleanliness check"
           | none => "Stage: pending"
         match state.runMode with

@@ -21,8 +21,11 @@ open Hopscotch.State
 open Lean
 
 /-- Public schema version for `results.json`. Bump on any
-    backward-incompatible change to the fields below. -/
-def resultsSchemaVersion : Nat := 1
+    backward-incompatible change to the fields below.
+
+    v2 added the `"lake test"` and `"lake lint"` values to the `failureStage` /
+    `ProbeResult.stage` enums (from the `--test` / `--lint` verify steps). -/
+def resultsSchemaVersion : Nat := 2
 
 /-- One cached bisect probe outcome, as surfaced in `results.json`. -/
 structure ProbeResultJson where
@@ -81,6 +84,8 @@ private def modeLabel : RunMode → String
 private def stageLabel : RunStage → String
   | .bump     => "lake update"
   | .build    => "lake build"
+  | .test     => "lake test"
+  | .lint     => "lake lint"
   | .gitCheck => "git cleanliness check"
 
 /-- Public label for a `ProbeOutcome`. -/

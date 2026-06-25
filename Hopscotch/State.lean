@@ -31,15 +31,18 @@ inductive RunMode where
 /--
 The last or current within-probe step associated with a persisted run state.
 
-Within one probe the steps run in order: `bump` → `build` (and any further verify
-steps). `gitCheck` is a virtual stage used only when a resume after a previously-
-failed commit is blocked because the worktree is dirty.
+Within one probe the steps run in order: `bump` → `build` → `test` → `lint`. The
+`test` and `lint` verify steps are optional (enabled via `--test` / `--lint`).
+`gitCheck` is a virtual stage used only when a resume after a previously-failed
+commit is blocked because the worktree is dirty.
 
 When `PersistedState.stage` is `none` the runner is between probes.
 -/
 inductive RunStage where
   | bump
   | build
+  | test
+  | lint
   | gitCheck
   deriving Repr, Inhabited, BEq, DecidableEq, ToJson, FromJson
 
@@ -82,7 +85,7 @@ structure BisectState where
 
 /-- On-disk state schema version; increment whenever `PersistedState` or its nested
     types change in a backward-incompatible way. A mismatch on resume is fatal. -/
-def currentSchemaVersion : Nat := 7
+def currentSchemaVersion : Nat := 8
 
 /--
 Minimal restartable state persisted under `.lake/hopscotch/state.json`.
@@ -95,6 +98,15 @@ structure PersistedState where
   schemaVersion : Nat := currentSchemaVersion
   projectDir : System.FilePath
   strategyScope : String
+  /-- Verify-step labels for this run, in order (e.g. `#["lake build", "lake test"]`).
+      Recorded so resuming with a different set (e.g. toggling `--test`/`--lint`) is
+      rejected: changing which checks run changes what pass/fail means for past probes.
+
+      `Option` rather than a defaulted `Array` so a `state.json` predating this field
+      still parses (derived `FromJson` only treats `Option` fields as optional), letting
+      the `schemaVersion` check report its reset hint instead of a parse error. Always
+      `some` in states this version writes. -/
+  verifySteps : Option (Array String) := none
   items : Array String
   runMode : RunMode := .linear
   bisect : Option BisectState := none
@@ -155,6 +167,8 @@ def logPath (paths : Paths) (namePrefix : String) (commit : String) (stage : Run
     match stage with
     | .bump => "bump"
     | .build => "build"
+    | .test => "test"
+    | .lint => "lint"
     | .gitCheck => "git-check"
   paths.logsDir / s!"{namePrefix}-{sanitizeForFileName (shortCommit commit)}-{stageName}.log"
 
