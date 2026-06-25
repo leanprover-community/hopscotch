@@ -918,10 +918,10 @@ private def «reject changed verify steps on resume» : IO Unit := do
       assertContains "delete .lake/hopscotch/ to start over" error.toString
         "the verify-steps rejection should give the reset instruction"
 
-/-- Scenario: when the downstream project has no test driver configured (`lake test` exits
-    non-zero with "no test driver configured"), the run aborts as a tool error rather than
-    recording the first commit as a spurious failed hop. -/
-private def «missing test driver aborts the run instead of reporting a culprit» : IO Unit := do
+/-- Scenario: when the downstream project has no test driver configured, the preflight
+    (`lake check-test`) aborts the run as a tool error before any probe, rather than letting
+    every commit fail at the test stage and reporting a spurious boundary. -/
+private def «missing test driver aborts the run before searching» : IO Unit := do
   withTempDir "hopscotch-missing-driver" fun dir => do
     let projectDir := dir / "downstream"
     let commitListPath := dir / "commits.txt"
@@ -941,10 +941,13 @@ private def «missing test driver aborts the run instead of reporting a culprit�
         "the run should abort with a clear no-driver message"
       assertContains "drop --test" error.toString
         "the no-driver message should suggest configuring a driver or dropping the flag"
-    -- The run aborted before recording any boundary: state stays running, not stopped.
-    let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (.running) state.status
-      "a no-driver abort should not record a spurious stopped/culprit state"
+    -- The preflight runs before any probe, so no state and no probe calls are recorded.
+    let statePath := projectDir / ".lake" / "hopscotch" / "state.json"
+    assertTrue (! (← statePath.pathExists))
+      "a no-driver abort should happen before any state is persisted"
+    let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy
+    assertEq "" calls
+      "no probe (update/build/test) should run when the driver preflight fails"
 
 def suite : TestSuite := #[
   test_case «downstream toolchain command resolution»,
@@ -976,7 +979,7 @@ def suite : TestSuite := #[
   test_case «lake test failure counts as a failed hop»,
   test_case «lake lint failure counts as a failed hop»,
   test_case «build, test, and lint run in order for each commit»,
-  test_case «missing test driver aborts the run instead of reporting a culprit»,
+  test_case «missing test driver aborts the run before searching»,
   test_case «reject changed verify steps on resume»,
   test_case «strip GITHUB_TOKEN from lake child env»
 ]

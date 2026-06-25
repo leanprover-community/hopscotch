@@ -78,29 +78,35 @@ private def runCommand (lakeCommand : String) (projectDir logPath : System.FileP
   IO.ofExcept stderrTask.get
   return { exitCode := exitCode }
 
+/-- Confirm a `<subcommand>` driver is configured, throwing a tool error if not.
+
+    Without a driver, `lake test` / `lake lint` fail identically on every commit/toolchain,
+    so the search would otherwise grind to a bogus boundary. Run once as a preflight (see
+    `lakeVerifyStep`) via `lake check-test` / `lake check-lint`, which exit non-zero when no
+    driver is configured. Requires Lake v4.12+, where those commands exist. -/
+private def checkDriverConfigured (lakeCommand subcommand : String)
+    (projectDir : System.FilePath) : IO Unit := do
+  let (cmd, args) ← buildCommand lakeCommand projectDir #[s!"check-{subcommand}"]
+  let out ← IO.Process.output { cmd := cmd, args := args, cwd := projectDir, env := secretScrubEnv }
+  if out.exitCode != 0 then
+    throw <| IO.userError
+      s!"`lake check-{subcommand}` reports no {subcommand} driver configured, so --{subcommand} \
+         can never pass. Add a {subcommand} driver (`@[{subcommand}_driver]` or the \
+         `{subcommand}Driver` lakefile field) or drop --{subcommand}."
+
 /-- One verify step that runs `lake <subcommand>` and treats a zero exit code as success.
-
-    A missing `<subcommand>` driver aborts the whole run as a tool error rather than
-    counting as a failed hop: it fails on every commit/toolchain, so the search would
-    otherwise report a bogus boundary.
-
-    Detection is a best-effort log match, not a `lake check-test` / `check-lint` query:
-    those commands only exist from ~v4.12, and a non-zero exit from them is ambiguous
-    (e.g. an old toolchain rejecting a newer lake-manifest.json), so they are unreliable
-    across the toolchain range a run may probe. A missed match falls back to a failed hop. -/
-private def lakeVerifyStep (lakeCommand subcommand : String) (stage : RunStage) : ProbeStep := {
+    When `driverCheck` is set, a preflight confirms the `<subcommand>` driver exists before
+    the search starts (used for `lake test` / `lake lint`). -/
+private def lakeVerifyStep (lakeCommand subcommand : String) (stage : RunStage)
+    (driverCheck : Bool := false) : ProbeStep := {
   stage := stage
   label := s!"lake {subcommand}"
   run := fun projectDir logPath quiet => do
     let result ← runCommand lakeCommand projectDir logPath #[subcommand] quiet
-    if result.exitCode != 0 then
-      let log ← IO.FS.readFile logPath
-      if log.contains s!"no {subcommand} driver configured" then
-        throw <| IO.userError
-          s!"no {subcommand} driver configured, so --{subcommand} can never pass. Add a \
-             {subcommand} driver (`@[{subcommand}_driver]` or the `{subcommand}Driver` lakefile \
-             field) or drop --{subcommand}. See {logPath}"
     return result.exitCode == 0
+  preflight :=
+    if driverCheck then fun projectDir _quiet => checkDriverConfigured lakeCommand subcommand projectDir
+    else fun _ _ => pure ()
 }
 
 /--
@@ -112,8 +118,8 @@ commit/toolchain bad.
 -/
 def mkVerifySteps (lakeCommand : String) (runTest runLint : Bool) : Array ProbeStep :=
   #[lakeVerifyStep lakeCommand "build" .build]
-    ++ (if runTest then #[lakeVerifyStep lakeCommand "test" .test] else #[])
-    ++ (if runLint then #[lakeVerifyStep lakeCommand "lint" .lint] else #[])
+    ++ (if runTest then #[lakeVerifyStep lakeCommand "test" .test (driverCheck := true)] else #[])
+    ++ (if runLint then #[lakeVerifyStep lakeCommand "lint" .lint (driverCheck := true)] else #[])
 
 /--
 Build the default lakefile-based run strategy.
