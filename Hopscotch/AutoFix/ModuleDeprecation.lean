@@ -79,12 +79,44 @@ def matchImportOf? (line oldModule : String) : Option (String × String × Strin
     else
       none
 
-/-- Number of (possibly overlapping-free) occurrences of `pat` in `s`. -/
-private def countOccurrences (s pat : String) : Nat :=
-  (s.splitOn pat).length - 1
+/-- The block-comment nesting depth at the end of one line that *started* at
+    `startDepth`, walking characters so that line comments (a double dash) and
+    string literals cannot be mistaken for block-comment open/close delimiters.
+    Lean's block comments nest, so depth is a count rather than a flag.
+    `inString` tracks whether the scan is inside a `"…"` literal (only entered at
+    depth 0).
+
+    A naive occurrence count of the delimiters would mishandle a line comment
+    that merely mentions a block-comment opener, spuriously opening a phantom
+    comment that swallows the imports that follow. -/
+private partial def lineEndDepth : List Char → Nat → Bool → Nat
+  | [],        depth, _        => depth
+  | c :: rest, depth, inString =>
+    if inString then
+      -- Inside a string literal: only the closing quote matters; a backslash
+      -- escapes the next character.
+      match c, rest with
+      | '\\', _ :: tl => lineEndDepth tl depth true
+      | '"',  tl      => lineEndDepth tl depth false
+      | _,    _       => lineEndDepth rest depth true
+    else if depth > 0 then
+      -- Inside a block comment: only nesting delimiters matter.
+      match c, rest with
+      | '/', '-' :: tl => lineEndDepth tl (depth + 1) false
+      | '-', '/' :: tl => lineEndDepth tl (depth - 1) false
+      | _,   _         => lineEndDepth rest depth false
+    else
+      -- In code: `--` starts a line comment (rest of line is inert), `/-` opens
+      -- a block comment, `"` opens a string literal.
+      match c, rest with
+      | '-', '-' :: _  => 0
+      | '/', '-' :: tl => lineEndDepth tl 1 false
+      | '"',  _        => lineEndDepth rest 0 true
+      | _,    _        => lineEndDepth rest 0 false
 
 /-- The lines of a Lean file that lie outside `/- … -/` block comments, so that
-    docstring text starting with `import` or `deprecated_module` cannot be
+    docstring text — or a `--` line comment, or a string literal — containing
+    `import`, `deprecated_module`, or stray `/-`/`-/` delimiters cannot be
     mistaken for the real thing. (A line that *opens* a comment is still
     yielded: its prefix is genuine code.) -/
 private def topLevelLines (contents : String) : Array String := Id.run do
@@ -93,7 +125,7 @@ private def topLevelLines (contents : String) : Array String := Id.run do
   for line in contents.splitOn "\n" do
     if depth == 0 then
       out := out.push line
-    depth := (depth + countOccurrences line "/-") - countOccurrences line "-/"
+    depth := lineEndDepth line.toList depth false
   return out
 
 /-- Extract the dotted module names imported by a `deprecated_module` shim (or any

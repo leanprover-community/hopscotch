@@ -41,14 +41,6 @@ structure Config where
       those could regress a working build. -/
   includeAdvisories : Bool := true
 
-/-- Read the proposed migrations and the deprecated-import advisories out of a
-    `results.json` document. -/
-private def loadMigrations (resultsPath : System.FilePath)
-    : IO (Array ImportMigration × Array ImportMigration) := do
-  let results ← readJsonFile (α := Results.ResultsJson) resultsPath
-  return (results.proposedFixes.map Results.AutoFixJson.toMigration,
-          results.deprecatedImports.map Results.AutoFixJson.toMigration)
-
 /-- Execute a `hopscotch fix` command. Returns the process exit code (0 success,
     2 on a user-facing error such as a missing results file). -/
 def run (config : Config) (output : String → IO Unit := IO.println) : IO UInt32 := do
@@ -58,7 +50,25 @@ def run (config : Config) (output : String → IO Unit := IO.println) : IO UInt3
     output s!"no results file at {resultsPath}; run a `hopscotch dep` bisection first, \
               or pass --from PATH"
     return 2
-  let (migrations, advisories) ← loadMigrations resultsPath
+  -- A results.json from an incompatible hopscotch (or a corrupt/partial file) must
+  -- fail with a clear message, not a raw `fromJson?` error — mirroring the
+  -- schema-version guard the runner applies to state.json on resume.
+  let results? : Option Results.ResultsJson ←
+    try
+      pure (some (← readJsonFile (α := Results.ResultsJson) resultsPath))
+    catch _ =>
+      pure none
+  let some results := results?
+    | output s!"could not parse {resultsPath} as a hopscotch results.json; regenerate it \
+                with a fresh `hopscotch dep` run (or pass a valid --from PATH)."
+      return 2
+  unless results.schemaVersion == Results.resultsSchemaVersion do
+    output s!"{resultsPath} has results schema version {results.schemaVersion}, but this \
+              hopscotch expects version {Results.resultsSchemaVersion}; regenerate it with a \
+              fresh `hopscotch dep` run (or use a matching hopscotch version)."
+    return 2
+  let migrations := results.proposedFixes.map Results.AutoFixJson.toMigration
+  let advisories := results.deprecatedImports.map Results.AutoFixJson.toMigration
   match config.action with
   | .list =>
       if migrations.isEmpty && advisories.isEmpty then

@@ -111,6 +111,17 @@ private def «shim recognition, comment awareness, and warning parsing» : IO Un
     "a doc-comment mention alone is not a shim"
   assertTrue (!isDeprecatedModuleShim "  deprecated_module (since := \"x\")\n")
     "the command must start at column 0"
+  -- A `--` line comment (or a string literal) that merely *mentions* a
+  -- block-comment opener must not hide the imports that follow — the old
+  -- occurrence-counting scan opened a phantom comment and dropped them.
+  assertEq #["Demo.A", "Demo.B"]
+    (parseShimImports (String.intercalate "\n"
+      ["import Demo.A", "-- see the /- delimiter in prose", "import Demo.B", ""]))
+    "a block-comment opener inside a line comment does not hide later imports"
+  assertEq #["Demo.A", "Demo.B"]
+    (parseShimImports (String.intercalate "\n"
+      ["import Demo.A", "def s : String := \"open /- only\"", "import Demo.B", ""]))
+    "block-comment delimiters inside a string literal are inert"
   -- The exact message shape Lean core emits (Lean.formatDeprecatedModuleWarning).
   let log := String.intercalate "\n" [
     "warning: ./Foo.lean:1:0: Upstreamed to core",
@@ -800,6 +811,42 @@ private def «hopscotch fix apply skips unknown fix types» : IO Unit := do
     assertTrue ((← IO.FS.readFile (projectDir / "Foo.lean")).contains "import Demo.New")
       "the supported migration is still applied"
 
+private def «hopscotch fix rejects a results.json from an incompatible schema» : IO Unit := do
+  withTempDir "hopscotch-fix-schema" fun dir => do
+    let projectDir := dir / "downstream"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile (projectDir / "Foo.lean") "import Demo.Old\n"
+    let paths ← mkPaths projectDir
+    let state : PersistedState := {
+      projectDir := paths.projectDir
+      strategyScope := "batteries"
+      items := #["c0", "c1"]
+      nextIndex := 1
+      currentCommit := some "c1"
+      lastSuccessfulCommit := some "c0"
+      status := .stopped
+      stage := some .build
+      lastLogPath := none
+      proposedFixes := #[{
+        fixId := "module-deprecation", oldModule := "Demo.Old", newModules := #["Demo.New"] }]
+      updatedAt := "2026-01-01T00:00:00Z"
+    }
+    Hopscotch.Results.writeResults paths none state
+    -- Simulate a results.json produced by an incompatible hopscotch by rewriting
+    -- the declared schema version to one this build does not accept.
+    let original ← IO.FS.readFile paths.resultsPath
+    let stale := original.replace
+      s!"\"schemaVersion\": {Hopscotch.Results.resultsSchemaVersion}" "\"schemaVersion\": 1"
+    assertTrue (stale != original) "the test patched the on-disk schema version"
+    IO.FS.writeFile paths.resultsPath stale
+    let (out, getLines) ← captureOutput
+    let code ← Hopscotch.FixCommand.run { action := .apply, projectDir := projectDir } out
+    assertEq 2 code "an incompatible results schema is rejected with exit 2"
+    assertTrue ((← getLines).any (·.contains "schema version"))
+      "the failure names the schema-version mismatch instead of a raw JSON error"
+    assertTrue ((← IO.FS.readFile (projectDir / "Foo.lean")).contains "import Demo.Old")
+      "a rejected fix command leaves the workspace untouched"
+
 /-- Pure + MockLake tests (no git required). -/
 def suite : TestSuite := #[
   test_case «module name ↔ relative path»,
@@ -812,7 +859,8 @@ def suite : TestSuite := #[
   test_case «green conclusion hands the last successful build log to detection»,
   test_case «hopscotch fix list/apply/revert round-trips a proposed migration»,
   test_case «fix apply migrates advisories by default; --no-advisories restricts to proposals»,
-  test_case «hopscotch fix apply skips unknown fix types»
+  test_case «hopscotch fix apply skips unknown fix types»,
+  test_case «hopscotch fix rejects a results.json from an incompatible schema»
 ]
 
 /-- Tests that drive real `git` over a fake dependency history. -/

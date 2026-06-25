@@ -95,15 +95,15 @@ structure ResultsJson where
   /-- Automated fixes proposed for the failure boundary (empty when none, or when
       the run did not stop). Apply with `hopscotch fix apply`. An entry with empty
       `newModules` means: remove the import. -/
-  proposedFixes        : Array AutoFixJson
+  proposedFixes        : Array AutoFixJson := #[]
   /-- Advisories: downstream imports that resolve through a live deprecation shim
       in the dependency — they build today but break when the shim is deleted
       upstream. Informational; not applied by `hopscotch fix apply`. -/
-  deprecatedImports    : Array AutoFixJson
+  deprecatedImports    : Array AutoFixJson := #[]
   /-- Notes from automated-fix detection, prefixed with the owning fix's id —
       e.g. a module that was deleted upstream with no replacement shim, so no
       fix could be proposed. -/
-  detectionNotes       : Array String
+  detectionNotes       : Array String := #[]
   updatedAt            : String
   deriving ToJson, FromJson, Repr, BEq, Inhabited
 
