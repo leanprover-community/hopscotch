@@ -80,10 +80,9 @@ private def runCommand (lakeCommand : String) (projectDir logPath : System.FileP
 
 /-- One verify step that runs `lake <subcommand>` and treats a zero exit code as success.
 
-    If the step fails with no `<subcommand>` driver configured (`lake test` / `lake lint`
-    print `no <test|lint> driver configured` and exit non-zero), abort the whole run as a
-    tool error instead of recording a failed hop: that misconfiguration fails on every
-    commit/toolchain, so the search would otherwise report a bogus boundary.
+    A missing `<subcommand>` driver aborts the whole run as a tool error rather than
+    counting as a failed hop: it fails on every commit/toolchain, so the search would
+    otherwise report a bogus boundary.
 
     Detection is a best-effort log match, not a `lake check-test` / `check-lint` query:
     those commands only exist from ~v4.12, and a non-zero exit from them is ambiguous
