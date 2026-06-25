@@ -100,6 +100,28 @@ private def «results.json git-check failure» : IO Unit := do
   assertEq (some "git cleanliness check") r.failureStage
     "gitCheck stage should map to 'git cleanliness check'"
 
+/-- Scenario: the test and lint stages map to their dedicated labels in results.json. -/
+private def «results.json test and lint failure stages» : IO Unit := do
+  let paths := mkPathsUnchecked "/tmp/demo"
+  let mkState (stage : RunStage) : PersistedState := {
+    schemaVersion := currentSchemaVersion
+    projectDir := "/tmp/demo"
+    strategyScope := "mathlib"
+    items := #["good1", "bad2"]
+    runMode := .linear
+    nextIndex := 1
+    currentCommit := some "bad2"
+    lastSuccessfulCommit := some "good1"
+    status := .stopped
+    stage := some stage
+    lastLogPath := some "/tmp/demo/.lake/hopscotch/logs/1-bad2-test.log"
+    updatedAt := "2026-04-24T00:00:00Z"
+  }
+  assertEq (some "lake test") (fromState paths (mkState .test)).failureStage
+    "test stage should map to the 'lake test' label"
+  assertEq (some "lake lint") (fromState paths (mkState .lint)).failureStage
+    "lint stage should map to the 'lake lint' label"
+
 /-- Scenario: a resolved bisect run exposes bounds, probe history, and the knownGoodWasProbed flag. -/
 private def «results.json for bisect resolved» : IO Unit := do
   let paths := mkPathsUnchecked "/tmp/demo"
@@ -252,6 +274,7 @@ def suite : TestSuite := #[
   test_case «results.json for completed linear run»,
   test_case «results.json for failed linear run»,
   test_case «results.json git-check failure»,
+  test_case «results.json test and lint failure stages»,
   test_case «results.json for bisect resolved»,
   test_case «results.json bisect good endpoint assumed»,
   test_case «writeResults writes both paths»,

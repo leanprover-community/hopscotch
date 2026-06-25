@@ -31,8 +31,8 @@
   "properties": {
     "schemaVersion": {
       "type": "integer",
-      "const": 2,
-      "description": "Schema version for this file. Bumped on any backward-incompatible change; independent of the runner's internal state.json schema. Version 2 added `proposedFixes`."
+      "const": 3,
+      "description": "Schema version for this file. Bumped on any backward-incompatible change; independent of the runner's internal state.json schema. v2 added the `lake test` / `lake lint` stage values (from the optional `--test` / `--lint` verify steps); v3 added `proposedFixes`, `deprecatedImports`, and `detectionNotes`."
     },
     "status": {
       "type": "string",
@@ -76,8 +76,8 @@
     },
     "failureStage": {
       "type": ["string", "null"],
-      "enum": [null, "lake update", "lake build", "git cleanliness check"],
-      "description": "Which step of the probe failed, when `status = stopped`. `lake update` = the bump step (rewrite lakefile/toolchain + `lake update`). `lake build` = a verify step. `git cleanliness check` = resume was blocked because the working tree is dirty after a fix (linear mode only)."
+      "enum": [null, "lake update", "lake build", "lake test", "lake lint", "git cleanliness check"],
+      "description": "Which step of the probe failed, when `status = stopped`. `lake update` = the bump step (rewrite lakefile/toolchain + `lake update`). `lake build` = the build verify step. `lake test` / `lake lint` = the optional `--test` / `--lint` verify steps. `git cleanliness check` = resume was blocked because the working tree is dirty after a fix (linear mode only)."
     },
     "nextIndex": {
       "type": "integer",
@@ -195,7 +195,7 @@
         },
         "stage": {
           "type": ["string", "null"],
-          "enum": [null, "lake update", "lake build", "git cleanliness check"],
+          "enum": [null, "lake update", "lake build", "lake test", "lake lint", "git cleanliness check"],
           "description": "The failing stage. `null` on success."
         },
         "logPath": {
@@ -235,7 +235,7 @@
   },
   "examples": [
     {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "status": "stopped",
       "mode": "bisect",
       "exitCode": 1,

@@ -199,6 +199,13 @@ private def runProbe (config : Config) (paths : Paths) (base : PersistedState)
     lastVerifyLog := some verifyLogPath
   return .success lastVerifyLog
 
+/-- Run each verify step's preflight once before the search begins, so a misconfiguration
+    (e.g. a missing `lake test` / `lake lint` driver) aborts immediately with a clear error
+    instead of surfacing as a bogus failure boundary. -/
+private def runVerifyPreflights (config : Config) (paths : Paths) : IO Unit := do
+  for step in config.strategy.verify do
+    step.preflight paths.projectDir config.quiet
+
 /--
 Drive the linear-mode state machine to completion or first failure.
 
@@ -224,6 +231,8 @@ private def runAdvance (config : Config) (paths : Paths) (commits : Array String
     let summary ← writeSummary paths state
     Results.writeResults paths config.resultsJsonPath state
     return { exitCode := 0, summary := summary, summaryPath := paths.summaryPath }
+
+  runVerifyPreflights config paths
 
   -- `lastSummary` captures the most recent summary written by `saveState`.
   -- It is always set before the loop exits with (status → fullySuccessful).
@@ -304,6 +313,9 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
     let summary ← writeSummary paths state
     Results.writeResults paths config.resultsJsonPath state
     return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
+
+  runVerifyPreflights config paths
+
   -- Bisect restores only `lean-toolchain` between probes, not source files.
   -- Uncommitted changes would therefore silently affect every probe in the search.
   if !config.allowDirtyWorkspace then

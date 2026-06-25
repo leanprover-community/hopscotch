@@ -16,15 +16,17 @@ def depUsage : String :=
   "usage: hopscotch dep <dependency-name> " ++
   "[--commits-file PATH | --to REF [--from REF]] " ++
   "[--git-url URL] [--project-dir DIR] [--quiet] [--allow-dirty-workspace] " ++
-  "[--keep-last-good] [--scan-mode [linear|bisect]] [--results-json PATH] " ++
-  "[--no-auto-fix] [--config-file PATH]"
+  "[--keep-last-good] [--test] [--lint] " ++
+  "[--build-args ARGS] [--test-args ARGS] [--lint-args ARGS] " ++
+  "[--no-auto-fix] [--scan-mode [linear|bisect]] [--results-json PATH] [--config-file PATH]"
 
 /-- Shared usage text for `hopscotch toolchain`. -/
 def toolchainUsage : String :=
   "usage: hopscotch toolchain --toolchains-file PATH " ++
   "[--project-dir DIR] [--quiet] [--allow-dirty-workspace] " ++
-  "[--keep-last-good] [--scan-mode [linear|bisect]] [--results-json PATH] " ++
-  "[--config-file PATH]"
+  "[--keep-last-good] [--test] [--lint] " ++
+  "[--build-args ARGS] [--test-args ARGS] [--lint-args ARGS] " ++
+  "[--scan-mode [linear|bisect]] [--results-json PATH] [--config-file PATH]"
 
 /-- Shared usage text for `hopscotch fix`. -/
 def fixUsage : String :=
@@ -50,6 +52,11 @@ def helpText : String :=
 private structure DepConfigFile where
   allowDirtyWorkspace : Option Bool := none
   keepLastGood : Option Bool := none
+  test : Option Bool := none
+  lint : Option Bool := none
+  buildArgs : Option (Array String) := none
+  testArgs : Option (Array String) := none
+  lintArgs : Option (Array String) := none
   projectDir : Option String := none
   gitUrl : Option String := none
   fromRef : Option String := none
@@ -61,7 +68,27 @@ private structure DepConfigFile where
 private structure ToolchainConfigFile where
   projectDir : Option String := none
   toolchainsFile : Option String := none
+  test : Option Bool := none
+  lint : Option Bool := none
+  buildArgs : Option (Array String) := none
+  testArgs : Option (Array String) := none
+  lintArgs : Option (Array String) := none
   deriving FromJson, Inhabited
+
+/-- Split a `--*-args` value into individual arguments on whitespace. No shell-style
+    quoting; use the config file's array form for an argument that itself contains spaces. -/
+private def splitArgs (s : String) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut cur : String := ""
+  for c in s.toList do
+    if c.isWhitespace then
+      unless cur.isEmpty do
+        out := out.push cur
+        cur := ""
+    else
+      cur := cur.push c
+  unless cur.isEmpty do out := out.push cur
+  return out
 
 /-- Load and parse a JSON config file, returning a default value when no file is given. -/
 private def loadConfigFile {α : Type _} [Lean.FromJson α] [Inhabited α]
@@ -86,6 +113,11 @@ private structure DepParseState where
   quiet : Bool := false
   allowDirtyWorkspace : Option Bool := none
   keepLastGood : Option Bool := none
+  test : Option Bool := none
+  lint : Option Bool := none
+  buildArgs : Option (Array String) := none
+  testArgs : Option (Array String) := none
+  lintArgs : Option (Array String) := none
   resultsJsonPath : Option System.FilePath := none
   autoFix : Option Bool := none
 
@@ -117,6 +149,16 @@ private def parseDepOptions (state : DepParseState) (args : List String) : IO De
       parseDepOptions { state with autoFix := some false } rest
   | "--auto-fix" :: rest =>
       parseDepOptions { state with autoFix := some true } rest
+  | "--test" :: rest =>
+      parseDepOptions { state with test := some true } rest
+  | "--lint" :: rest =>
+      parseDepOptions { state with lint := some true } rest
+  | "--build-args" :: value :: rest =>
+      parseDepOptions { state with buildArgs := some (splitArgs value) } rest
+  | "--test-args" :: value :: rest =>
+      parseDepOptions { state with testArgs := some (splitArgs value) } rest
+  | "--lint-args" :: value :: rest =>
+      parseDepOptions { state with lintArgs := some (splitArgs value) } rest
   | "--scan-mode" :: "bisect" :: rest =>
       parseDepOptions { state with runMode := .bisect } rest
   | "--scan-mode" :: "linear" :: rest =>
@@ -129,6 +171,11 @@ private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
   let allowDirtyWorkspace := (state.allowDirtyWorkspace <|> cfg.allowDirtyWorkspace).getD false
   let keepLastGood := (state.keepLastGood <|> cfg.keepLastGood).getD false
   let autoFixEnabled := (state.autoFix <|> cfg.autoFix).getD true
+  let runTest := (state.test <|> cfg.test).getD false
+  let runLint := (state.lint <|> cfg.lint).getD false
+  let buildArgs := (state.buildArgs <|> cfg.buildArgs).getD #[]
+  let testArgs := (state.testArgs <|> cfg.testArgs).getD #[]
+  let lintArgs := (state.lintArgs <|> cfg.lintArgs).getD #[]
   let projectDir := (state.projectDir <|> cfg.projectDir.map System.FilePath.mk).getD "."
   let fromRef := state.fromRef <|> cfg.fromRef
   let gitUrl := state.gitUrl <|> cfg.gitUrl
@@ -151,7 +198,9 @@ private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
         if fromRef.isNone && gitUrl.isNone then
           throw <| IO.userError depUsage
         pure <| Runner.ItemSource.range none fromRef gitUrl
-  let baseStrategy := Runner.lakefileStrategy state.dependencyName "lake"
+  let verifyOpts : Runner.VerifyOptions :=
+    { runTest, runLint, buildArgs, testArgs, lintArgs }
+  let baseStrategy := Runner.lakefileStrategy state.dependencyName "lake" verifyOpts
   -- INTERNAL: HOPSCOTCH_SKIP_BUILD bypasses lake build entirely, leaving only the
   -- lake update step. Intended for callers that handle build validation separately
   -- (e.g. bump-to-latest action in update-only mode). Not part of the public CLI
@@ -191,6 +240,11 @@ private structure ToolchainParseState where
   quiet : Bool := false
   allowDirtyWorkspace : Bool := false
   keepLastGood : Bool := false
+  test : Option Bool := none
+  lint : Option Bool := none
+  buildArgs : Option (Array String) := none
+  testArgs : Option (Array String) := none
+  lintArgs : Option (Array String) := none
   resultsJsonPath : Option System.FilePath := none
   configFile : Option System.FilePath := none
 
@@ -213,6 +267,16 @@ private def parseToolchainOptions (state : ToolchainParseState)
       parseToolchainOptions { state with allowDirtyWorkspace := true } rest
   | "--keep-last-good" :: rest =>
       parseToolchainOptions { state with keepLastGood := true } rest
+  | "--test" :: rest =>
+      parseToolchainOptions { state with test := some true } rest
+  | "--lint" :: rest =>
+      parseToolchainOptions { state with lint := some true } rest
+  | "--build-args" :: value :: rest =>
+      parseToolchainOptions { state with buildArgs := some (splitArgs value) } rest
+  | "--test-args" :: value :: rest =>
+      parseToolchainOptions { state with testArgs := some (splitArgs value) } rest
+  | "--lint-args" :: value :: rest =>
+      parseToolchainOptions { state with lintArgs := some (splitArgs value) } rest
   | "--scan-mode" :: "bisect" :: rest =>
       parseToolchainOptions { state with runMode := .bisect } rest
   | "--scan-mode" :: "linear" :: rest =>
@@ -223,10 +287,17 @@ private def parseToolchainOptions (state : ToolchainParseState)
 private def buildToolchainConfig (state : ToolchainParseState) : IO Runner.Config := do
   let cfg : ToolchainConfigFile ← loadConfigFile state.configFile
   let projectDir := (state.projectDir <|> cfg.projectDir.map System.FilePath.mk).getD "."
+  let runTest := (state.test <|> cfg.test).getD false
+  let runLint := (state.lint <|> cfg.lint).getD false
+  let buildArgs := (state.buildArgs <|> cfg.buildArgs).getD #[]
+  let testArgs := (state.testArgs <|> cfg.testArgs).getD #[]
+  let lintArgs := (state.lintArgs <|> cfg.lintArgs).getD #[]
   let toolchainsFile ←
     match state.toolchainsFile <|> cfg.toolchainsFile.map System.FilePath.mk with
     | some path => pure path
     | none => throw <| IO.userError s!"--toolchains-file is required\n{toolchainUsage}"
+  let verifyOpts : Runner.VerifyOptions :=
+    { runTest, runLint, buildArgs, testArgs, lintArgs }
   return {
     itemSource := Runner.ItemSource.file toolchainsFile
     projectDir := projectDir
@@ -235,7 +306,7 @@ private def buildToolchainConfig (state : ToolchainParseState) : IO Runner.Confi
     allowDirtyWorkspace := state.allowDirtyWorkspace
     keepLastGood := state.keepLastGood
     resultsJsonPath := state.resultsJsonPath
-    strategy := Runner.toolchainStrategy "lake"
+    strategy := Runner.toolchainStrategy "lake" verifyOpts
   }
 
 private def parseToolchain (args : List String) : IO Runner.Config := do

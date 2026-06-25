@@ -23,6 +23,20 @@ structure ProbeStep where
   stage : RunStage
   label : String
   run : (projectDir logPath : System.FilePath) → (quiet : Bool) → IO Bool
+  /-- One-time check run before the search begins (e.g. confirm a `lake test` / `lake lint`
+      driver is configured). Throws to abort the run with a tool error; default is a no-op. -/
+  preflight : (projectDir : System.FilePath) → (quiet : Bool) → IO Unit := fun _ _ => pure ()
+
+/-- Which optional verify steps to run, and extra `lake` arguments to append to each.
+    `buildArgs` always apply (`lake build` always runs); `testArgs` / `lintArgs` apply only
+    when their step is enabled. Consumed by `lakefileStrategy` / `toolchainStrategy` to
+    assemble the `verify` array. `lake update` is never affected. -/
+structure VerifyOptions where
+  runTest : Bool := false
+  runLint : Bool := false
+  buildArgs : Array String := #[]
+  testArgs : Array String := #[]
+  lintArgs : Array String := #[]
 
 /-- Strategy for applying a version and verifying the result.
     Each probe runs `mkBump` first; on success, each step in `verify` runs in order.

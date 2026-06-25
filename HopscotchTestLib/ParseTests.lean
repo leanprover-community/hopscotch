@@ -90,6 +90,37 @@ private def «dep to and git url» : IO Unit := do
   | .range (some "abc") none (some _) => pure ()
   | other => fail s!"expected range with toRef and gitUrl, got {repr other}"
 
+/-- Scenario: `dep` defaults to a build-only verify pipeline. -/
+private def «dep defaults to build-only verify» : IO Unit := do
+  let config ← parse ["dep", "mathlib", "--from", "abc", "--to", "def"]
+  assertEq #["lake build"] (config.strategy.verify.map (·.label))
+    "without --test/--lint the only verify step should be lake build"
+
+/-- Scenario: `dep --test --lint` appends the test and lint verify steps after build. -/
+private def «dep test and lint flags add verify steps» : IO Unit := do
+  let config ← parse ["dep", "mathlib", "--from", "abc", "--to", "def", "--test", "--lint"]
+  assertEq #["lake build", "lake test", "lake lint"] (config.strategy.verify.map (·.label))
+    "--test and --lint should add their steps in build → test → lint order"
+
+/-- Scenario: `dep --test` alone adds only the test step. -/
+private def «dep test flag adds only the test step» : IO Unit := do
+  let config ← parse ["dep", "mathlib", "--from", "abc", "--to", "def", "--test"]
+  assertEq #["lake build", "lake test"] (config.strategy.verify.map (·.label))
+    "--test alone should add the test step but not lint"
+
+/-- Scenario: `dep --build-args` appends extra args to the build step (split on whitespace). -/
+private def «dep build-args append to the build step» : IO Unit := do
+  let config ← parse ["dep", "mathlib", "--from", "abc", "--to", "def", "--build-args", "-Kfoo=bar -j4"]
+  assertEq #["lake build -Kfoo=bar -j4"] (config.strategy.verify.map (·.label))
+    "--build-args should append its whitespace-split args to lake build"
+
+/-- Scenario: `dep --test-args` / `--lint-args` append to their respective steps. -/
+private def «dep test-args and lint-args append to their steps» : IO Unit := do
+  let config ← parse ["dep", "mathlib", "--from", "abc", "--to", "def",
+                      "--test", "--test-args", "--verbose", "--lint", "--lint-args", "--fix"]
+  assertEq #["lake build", "lake test --verbose", "lake lint --fix"] (config.strategy.verify.map (·.label))
+    "--test-args/--lint-args should append to their own steps"
+
 -- ---------------------------------------------------------------------------
 -- dep: config file
 -- ---------------------------------------------------------------------------
@@ -103,6 +134,35 @@ private def «dep config file» : IO Unit := do
     match config.itemSource with
     | .range (some "abc") (some "cfgFrom") (some "https://github.com/cfg/repo") => pure ()
     | other => fail s!"expected config file values to fill in fromRef/gitUrl, got {repr other}"
+
+/-- Scenario: `dep` reads `test` and `lint` from a config file. -/
+private def «dep reads test and lint from config file» : IO Unit := do
+  withTempDir "parse-tests-dep-checks-cfg" fun dir => do
+    let cfgPath := dir / "config.json"
+    IO.FS.writeFile cfgPath "{\"test\": true, \"lint\": true}"
+    let config ← parse ["dep", "mathlib", "--to", "abc", "--config-file", cfgPath.toString]
+    assertEq #["lake build", "lake test", "lake lint"] (config.strategy.verify.map (·.label))
+      "config-file test/lint should enable the test and lint verify steps"
+
+/-- Scenario: `dep` reads `buildArgs` / `testArgs` arrays from a config file; the array form
+    preserves an argument that itself contains a space. -/
+private def «dep reads build/test args from config file» : IO Unit := do
+  withTempDir "parse-tests-dep-args-cfg" fun dir => do
+    let cfgPath := dir / "config.json"
+    IO.FS.writeFile cfgPath "{\"buildArgs\": [\"-Kfoo=a b\"], \"test\": true, \"testArgs\": [\"--verbose\"]}"
+    let config ← parse ["dep", "mathlib", "--to", "abc", "--config-file", cfgPath.toString]
+    assertEq #["lake build -Kfoo=a b", "lake test --verbose"] (config.strategy.verify.map (·.label))
+      "config-file buildArgs/testArgs should apply; the array form keeps a space-containing arg whole"
+
+/-- Scenario: explicit CLI `--build-args` replaces (does not merge with) the config-file array. -/
+private def «dep cli build-args replace config file» : IO Unit := do
+  withTempDir "parse-tests-dep-args-override" fun dir => do
+    let cfgPath := dir / "config.json"
+    IO.FS.writeFile cfgPath "{\"buildArgs\": [\"-Kfromcfg\"]}"
+    let config ← parse ["dep", "mathlib", "--to", "abc", "--build-args", "-Kfromcli",
+                        "--config-file", cfgPath.toString]
+    assertEq #["lake build -Kfromcli"] (config.strategy.verify.map (·.label))
+      "CLI --build-args should replace the config-file buildArgs array"
 
 /-- Scenario: explicit CLI flags override config file values. -/
 private def «dep cli overrides config file» : IO Unit := do
@@ -187,6 +247,18 @@ private def «toolchain project dir» : IO Unit := do
   let config ← parse ["toolchain", "--toolchains-file", "/p/f", "--project-dir", "/my/proj"]
   assertEq "/my/proj" config.projectDir.toString "project dir should match"
 
+/-- Scenario: `toolchain --test --lint` appends the test and lint verify steps after build. -/
+private def «toolchain test and lint flags add verify steps» : IO Unit := do
+  let config ← parse ["toolchain", "--toolchains-file", "/p/toolchains.txt", "--test", "--lint"]
+  assertEq #["lake build", "lake test", "lake lint"] (config.strategy.verify.map (·.label))
+    "--test and --lint should add their steps in build → test → lint order"
+
+/-- Scenario: `toolchain --build-args` appends extra args to the build step. -/
+private def «toolchain build-args append to the build step» : IO Unit := do
+  let config ← parse ["toolchain", "--toolchains-file", "/p/toolchains.txt", "--build-args", "-Kfoo=bar"]
+  assertEq #["lake build -Kfoo=bar"] (config.strategy.verify.map (·.label))
+    "--build-args should append to the toolchain strategy's build step"
+
 /-- Scenario: `toolchain` reads `toolchainsFile` from a config file. -/
 private def «toolchain config file» : IO Unit := do
   withTempDir "parse-tests-tc-cfg" fun dir => do
@@ -243,7 +315,15 @@ def suite : TestSuite := #[
   test_case «dep from only»,
   test_case «dep git url only»,
   test_case «dep to and git url»,
+  test_case «dep defaults to build-only verify»,
+  test_case «dep test and lint flags add verify steps»,
+  test_case «dep test flag adds only the test step»,
+  test_case «dep build-args append to the build step»,
+  test_case «dep test-args and lint-args append to their steps»,
   test_case «dep config file»,
+  test_case «dep reads test and lint from config file»,
+  test_case «dep reads build/test args from config file»,
+  test_case «dep cli build-args replace config file»,
   test_case «dep cli overrides config file»,
   test_case «dep no source»,
   test_case «dep no dep name»,
@@ -257,6 +337,8 @@ def suite : TestSuite := #[
   test_case «toolchain quiet flag»,
   test_case «toolchain allow dirty workspace»,
   test_case «toolchain project dir»,
+  test_case «toolchain test and lint flags add verify steps»,
+  test_case «toolchain build-args append to the build step»,
   test_case «toolchain config file»,
   test_case «toolchain no file»,
   test_case «toolchain unknown flag»,
