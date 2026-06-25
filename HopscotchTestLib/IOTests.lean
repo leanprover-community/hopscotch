@@ -821,7 +821,7 @@ private def «lake test failure counts as a failed hop» : IO Unit := do
     let result ← Runner.run {
       itemSource := .file commitListPath
       projectDir := projectDir
-      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) (runTest := true)
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) { runTest := true }
       quiet := true
     } ignoreOutput
     assertEq 1 result.exitCode "a failing lake test should stop the run"
@@ -852,7 +852,7 @@ private def «lake lint failure counts as a failed hop» : IO Unit := do
     let result ← Runner.run {
       itemSource := .file commitListPath
       projectDir := projectDir
-      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) (runLint := true)
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) { runLint := true }
       quiet := true
     } ignoreOutput
     assertEq 1 result.exitCode "a failing lake lint should stop the run"
@@ -877,7 +877,7 @@ private def «build, test, and lint run in order for each commit» : IO Unit := 
     let result ← Runner.run {
       itemSource := .file commitListPath
       projectDir := projectDir
-      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) (runTest := true) (runLint := true)
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) { runTest := true, runLint := true }
       quiet := true
     } ignoreOutput
     assertEq 0 result.exitCode "all checks passing should complete the run"
@@ -900,7 +900,7 @@ private def «reject changed verify steps on resume» : IO Unit := do
     let _ ← Runner.run {
       itemSource := .file commitListPath
       projectDir := projectDir
-      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) (runTest := true)
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) { runTest := true }
       quiet := true
     } ignoreOutput
     -- Resuming without --test must be rejected with the usual reset hint.
@@ -932,7 +932,7 @@ private def «missing test driver aborts the run before searching» : IO Unit :=
       let _ ← Runner.run {
         itemSource := .file commitListPath
         projectDir := projectDir
-        strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) (runTest := true)
+        strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) { runTest := true }
         quiet := true
       } ignoreOutput
       fail "a missing test driver should abort the run, not record a failed hop"
@@ -948,6 +948,54 @@ private def «missing test driver aborts the run before searching» : IO Unit :=
     let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy
     assertEq "" calls
       "no probe (update/build/test) should run when the driver preflight fails"
+
+/-- Scenario: extra `--build-args` / `--test-args` are appended to the actual `lake`
+    invocations (and `lake update` is left untouched). -/
+private def «verify-step args are passed to lake» : IO Unit := do
+  withTempDir "hopscotch-verify-args" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\n"
+    configureMockLake projectDir "success"
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+        { runTest := true, buildArgs := #["-Kfoo=bar"], testArgs := #["--", "--verbose"] }
+      quiet := true
+    } ignoreOutput
+    assertEq 0 result.exitCode "run with extra args should complete"
+    let argsLog := (← IO.FS.readFile (mockLakeArgsPath projectDir)).trimAscii.copy.splitOn "\n"
+    assertEq ["update:", "build:-Kfoo=bar", "test:-- --verbose"] argsLog
+      "build/test should receive their configured extra args; lake update gets none"
+
+/-- Scenario: resuming with different verify-step args is rejected, since the args change
+    what pass/fail means for already-probed commits. -/
+private def «reject changed build-args on resume» : IO Unit := do
+  withTempDir "hopscotch-args-change" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\nbadbuild\n"
+    configureMockLake projectDir "fail-build"
+    let _ ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) { buildArgs := #["-Kfoo=bar"] }
+      quiet := true
+    } ignoreOutput
+    try
+      let _ ← Runner.run {
+        itemSource := .file commitListPath
+        projectDir := projectDir
+        strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) { buildArgs := #["-Kfoo=different"] }
+        quiet := true
+      } ignoreOutput
+      fail "changing build args on resume should be rejected"
+    catch error =>
+      assertContains "verification steps changed since the last run" error.toString
+        "changing --build-args should require resetting persisted state"
 
 def suite : TestSuite := #[
   test_case «downstream toolchain command resolution»,
@@ -980,6 +1028,8 @@ def suite : TestSuite := #[
   test_case «lake lint failure counts as a failed hop»,
   test_case «build, test, and lint run in order for each commit»,
   test_case «missing test driver aborts the run before searching»,
+  test_case «verify-step args are passed to lake»,
+  test_case «reject changed build-args on resume»,
   test_case «reject changed verify steps on resume»,
   test_case «strip GITHUB_TOKEN from lake child env»
 ]

@@ -22,6 +22,11 @@ def mockLakeToolchainsPath (projectDir : System.FilePath) : System.FilePath :=
 def mockLakeDepsPath (projectDir : System.FilePath) : System.FilePath :=
   mockLakeDir projectDir / "deps.log"
 
+/-- File storing the extra arguments passed to each `lake <stage>` invocation
+    (one `{stage}:{space-joined args}` line per call), for asserting `--*-args` plumbing. -/
+def mockLakeArgsPath (projectDir : System.FilePath) : System.FilePath :=
+  mockLakeDir projectDir / "args.log"
+
 /-- File storing the `GITHUB_TOKEN` value visible to each mock `lake` invocation.
     Used by the env-isolation regression test to confirm that hopscotch strips the
     token from the environment of every child process it spawns. -/
@@ -43,6 +48,8 @@ def configureMockLake (projectDir : System.FilePath) (mode : String) : IO Unit :
     IO.FS.writeFile (mockLakeToolchainsPath projectDir) ""
   if !(← (mockLakeDepsPath projectDir).pathExists) then
     IO.FS.writeFile (mockLakeDepsPath projectDir) ""
+  if !(← (mockLakeArgsPath projectDir).pathExists) then
+    IO.FS.writeFile (mockLakeArgsPath projectDir) ""
   if !(← (mockLakeEnvPath projectDir).pathExists) then
     IO.FS.writeFile (mockLakeEnvPath projectDir) ""
 
@@ -78,11 +85,11 @@ private def readPinnedRev (projectDir : System.FilePath) : IO String := do
 /-- Execute the mock `lake` helper executable used by the IO-heavy tests. -/
 def runMockLake (args : List String) : IO UInt32 := do
   let projectDir ← IO.currentDir
-  let (stage, dependencyName?) ←
+  let (stage, dependencyName?, extraArgs) ←
     match args with
-    | [stage] => pure (stage, none)
-    | ["update", dependencyName] => pure ("update", some dependencyName)
-    | _ => fail s!"mock lake expected `build` or `update [dependency]`, got: {args}"
+    | "update" :: dependencyName :: _ => pure ("update", some dependencyName, #[])
+    | stage :: rest => pure (stage, none, rest.toArray)
+    | [] => fail s!"mock lake expected a subcommand, got: {args}"
   let mode := (← IO.FS.readFile (mockLakeModePath projectDir)).trimAscii.copy
   -- Driver preflights (`lake check-test` / `check-lint`) are not probe steps, so they are
   -- not recorded in the call logs; "missing-driver" mode reports no driver via a non-zero exit.
@@ -94,6 +101,8 @@ def runMockLake (args : List String) : IO UInt32 := do
     handle.putStrLn s!"{stage}:{rev}"
   IO.FS.withFile (mockLakeToolchainsPath projectDir) .append fun handle => do
     handle.putStrLn s!"{stage}:{rev}:{toolchain}"
+  IO.FS.withFile (mockLakeArgsPath projectDir) .append fun handle => do
+    handle.putStrLn s!"{stage}:{String.intercalate " " extraArgs.toList}"
   let observedToken := (← IO.getEnv "GITHUB_TOKEN").getD "(unset)"
   IO.FS.withFile (mockLakeEnvPath projectDir) .append fun handle => do
     handle.putStrLn s!"GITHUB_TOKEN={observedToken}"

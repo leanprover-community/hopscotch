@@ -366,8 +366,8 @@ def loadInitialState (paths : Paths) (config : Config)
           "strategy changed since the last run; delete .lake/hopscotch/ to start over"
       if state.verifySteps != some verifySteps then
         throw <| IO.userError
-          "verification steps changed since the last run (e.g. toggling --test/--lint); \
-           delete .lake/hopscotch/ to start over"
+          "verification steps changed since the last run (e.g. toggling --test/--lint or \
+           changing --build-args/--test-args/--lint-args); delete .lake/hopscotch/ to start over"
       if state.runMode != config.runMode then
         throw <| IO.userError
           "run mode changed since the last run; delete .lake/hopscotch/ to start over"
