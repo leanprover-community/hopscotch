@@ -278,6 +278,45 @@ private def «green conclusion hands the last successful build log to detection�
     assertTrue (state.deprecatedImports.any (·.oldModule == "Demo.Promoted"))
       "green-run migrations are folded into the advisories"
 
+/-- Records the file name of the log detection received, so a test can assert
+    *which* step's log reached it. -/
+private def logNameFix : Fix := {
+  id := "log-name"
+  description := "Record the file name of the log handed to detection."
+  detect := fun ctx => pure {
+    advisories := #[{ fixId := ""
+                      oldModule := (ctx.buildLogPath.bind (·.fileName)).getD "none"
+                      newModules := #[] }] }
+  applyOne := fun _ _ _ => pure #[]
+}
+
+/-- With `--test`/`--lint` enabled the verify steps are `[build, test, lint]`, so
+    the *last* successful step's log is the lint log. Detection must still receive
+    the **build** log, where `linter.deprecated.module` warnings actually fire. -/
+private def «detection reads the build log, not the lint log, with --lint enabled» : IO Unit := do
+  withTempDir "hopscotch-buildlog" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "c1\nc2\n"
+    configureMockLake projectDir "success"
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      runMode := .linear
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+                    { runTest := true, runLint := true }
+      autoFixes := #[logNameFix]
+      quiet := true
+    } ignoreOutput
+    assertEq 0 result.exitCode "all commits pass with test+lint enabled"
+    let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
+    assertEq (.fullySuccessful) state.status "the run is fully successful"
+    let some adv := state.deprecatedImports[0]?
+      | fail "detection recorded the log file it received"
+    assertTrue (adv.oldModule.endsWith "build.log")
+      s!"detection received the build log, not the lint/test log (got {adv.oldModule})"
+
 /-! ## Detection against a real dependency git history (git-gated) -/
 
 private def «module-deprecation detection proposes, never applies» : IO Unit := do
@@ -857,6 +896,7 @@ def suite : TestSuite := #[
   test_case «backups restore each file's own original (collision regression)»,
   test_case «failure boundary records proposals without retrying or rewriting»,
   test_case «green conclusion hands the last successful build log to detection»,
+  test_case «detection reads the build log, not the lint log, with --lint enabled»,
   test_case «hopscotch fix list/apply/revert round-trips a proposed migration»,
   test_case «fix apply migrates advisories by default; --no-advisories restricts to proposals»,
   test_case «hopscotch fix apply skips unknown fix types»,

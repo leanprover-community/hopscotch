@@ -61,12 +61,15 @@ private def restoreTo (config : Config) (paths : Paths) (commit : String)
   unless ok do
     emit .running s!"[{← nowUtcString}] Warning: could not restore to {commit} (see {logPath})"
 
-/-- Result of one full bump + verify probe. A success carries the log of the last
-    verify step, so a green conclusion can hand the toolchain's deprecation
-    warnings to detection. -/
+/-- Result of one full bump + verify probe. Both outcomes carry the `lake build`
+    step's log (when the build step ran), so detection can scan it for the
+    toolchain's deprecation warnings regardless of which later step (`lake test` /
+    `lake lint`) ultimately failed or was last on a green probe — deprecation
+    warnings are emitted at build time. On a failure, `logPath` is still the
+    failing step's log (used for the culprit copy and `lastLogPath`). -/
 private inductive ProbeRunResult where
-  | success (lastLog : Option System.FilePath)
-  | failure (stage : RunStage) (logPath : System.FilePath)
+  | success (buildLog : Option System.FilePath)
+  | failure (stage : RunStage) (logPath : System.FilePath) (buildLog : Option System.FilePath)
   deriving Repr
 
 /--
@@ -81,7 +84,7 @@ breakage).
 -/
 private def attachProposedFixes (config : Config) (paths : Paths)
     (state : PersistedState) (emit : ConsoleStyle → String → IO Unit)
-    (successLog : Option System.FilePath := none) : IO PersistedState := do
+    (buildLog : Option System.FilePath := none) : IO PersistedState := do
   if config.autoFixes.isEmpty then return state
   -- Inspect the boundary commit when stopped; the newest range commit otherwise.
   let some commit := state.currentCommit <|> state.items.back? | return state
@@ -96,7 +99,11 @@ private def attachProposedFixes (config : Config) (paths : Paths)
     -- the first item — lists are oldest→newest by convention, making it the
     -- closest known-good proxy. (`getD commit` is unreachable: a run has items.)
     baseline := state.lowerBoundRef.getD (state.items[0]?.getD commit)
-    buildLogPath := state.lastLogPath <|> successLog
+    -- Prefer the build log (where deprecation warnings live); fall back to
+    -- `lastLogPath` for paths that don't carry one (e.g. a resumed bisect
+    -- resolving from a stored failing probe — there `lastLogPath` is the
+    -- boundary's failing-step log).
+    buildLogPath := buildLog <|> state.lastLogPath
     quiet := config.quiet }
   let detected ← AutoFix.detectFixes config.autoFixes ctx
     (fun msg => do emit .running s!"[{← nowUtcString}] {msg}")
@@ -179,25 +186,28 @@ private def runProbe (config : Config) (paths : Paths) (base : PersistedState)
     emit (if bumpOk then .success else .failure)
       s!"[{← nowUtcString}] Finished {bumpStep.label} (log file: {bumpLogPath})"
     if !bumpOk then
-      return .failure bumpStep.stage bumpLogPath
+      -- The build step hasn't run yet, so there is no build log to hand to detection.
+      return .failure bumpStep.stage bumpLogPath none
   -- Verify phase: run each step in order, resuming from the saved point if applicable.
   let startAt :=
     match resumeStage? with
     | none => 0
     | some stage =>
         config.strategy.verify.findIdx? (·.stage == stage) |>.getD 0
-  let mut lastVerifyLog : Option System.FilePath := none
+  -- Track the build step's log specifically (it carries deprecation warnings),
+  -- separately from whichever step ultimately fails.
+  let mut buildLog : Option System.FilePath := none
   for step in config.strategy.verify.extract startAt config.strategy.verify.size do
     let _ ← saveState paths config.resultsJsonPath <| buildRunningState base index commit (some step.stage)
     let verifyLogPath := State.logPath paths namePrefix commit step.stage
+    if step.stage == .build then buildLog := some verifyLogPath
     emit .running s!"[{← nowUtcString}] Running {step.label}"
     let stepOk ← step.run paths.projectDir verifyLogPath config.quiet
     emit (if stepOk then .success else .failure)
       s!"[{← nowUtcString}] Finished {step.label} (log file: {verifyLogPath})"
     if !stepOk then
-      return .failure step.stage verifyLogPath
-    lastVerifyLog := some verifyLogPath
-  return .success lastVerifyLog
+      return .failure step.stage verifyLogPath buildLog
+  return .success buildLog
 
 /-- Run each verify step's preflight once before the search begins, so a misconfiguration
     (e.g. a missing `lake test` / `lake lint` driver) aborts immediately with a clear error
@@ -237,21 +247,22 @@ private def runAdvance (config : Config) (paths : Paths) (commits : Array String
   -- `lastSummary` captures the most recent summary written by `saveState`.
   -- It is always set before the loop exits with (status → fullySuccessful).
   let mut lastSummary : String := ""
-  -- Log of the most recent successful verify step, handed to detection on a green
-  -- conclusion (it carries the toolchain's deprecation warnings).
+  -- `lake build` log of the most recent successful probe, handed to detection on
+  -- a green conclusion (it carries the toolchain's deprecation warnings, which
+  -- fire at build time — not in a later `lake test` / `lake lint` log).
   let mut lastGreenLog : Option System.FilePath := none
   for index in [state.nextIndex:commits.size] do
     let commit := commits[index]!
     let probeResult ← runProbe config paths state index index commit emit
     match probeResult with
-    | .failure stage logPath =>
+    | .failure stage logPath buildLog =>
         let stopped ← attachProposedFixes config paths
-          (buildFailureState state index commit stage logPath) emit
+          (buildFailureState state index commit stage logPath) emit buildLog
         let (_, summary) ← saveState paths config.resultsJsonPath stopped
         copyCulpritLog paths logPath
         return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
-    | .success lastLog =>
-        lastGreenLog := lastLog <|> lastGreenLog
+    | .success buildLog =>
+        lastGreenLog := buildLog <|> lastGreenLog
         if resumedFailedCommit && index == resumeIndex && !config.allowDirtyWorkspace then
           match ← checkGitWorktree paths.projectDir with
           | .clean =>
@@ -369,11 +380,11 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
     let stepNum := bisect.probeResults.size
     let probeResult ← runProbe config paths state stepNum probeIndex commit emit
     match probeResult with
-    | .success lastLog =>
+    | .success buildLog =>
         if !bisect.verifiedBad then
           if config.keepLastGood then
             let allPass ← attachProposedFixes config paths
-              (buildBisectAllPassState state bisect commit) emit lastLog
+              (buildBisectAllPassState state bisect commit) emit buildLog
             let (_, summary) ← saveState paths config.resultsJsonPath allPass
             return { exitCode := 0, summary, summaryPath := paths.summaryPath }
           else
@@ -387,7 +398,7 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
             outcome := .success
           }
         }
-    | .failure stage logPath =>
+    | .failure stage logPath _ =>
         advanceOrResolve state { bisect with
           knownBadIndex := probeIndex
           verifiedBad := true
