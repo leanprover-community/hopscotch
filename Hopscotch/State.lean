@@ -90,9 +90,28 @@ structure BisectState where
   probeResults : Array ProbeResult := #[]
   deriving Repr, Inhabited, BEq, ToJson, FromJson
 
+/-- Which strategy a run used, so `hopscotch continue` can rebuild it from state. -/
+inductive StrategyKind where
+  | dep
+  | toolchain
+  deriving Repr, Inhabited, BEq, DecidableEq, ToJson, FromJson
+
+/-- Serializable description of a run's strategy + verify configuration — everything
+    `hopscotch continue` needs to rebuild the strategy from saved state (the strategy's
+    own `IO` closures can't be persisted). The dependency name (or `"toolchain"`) lives
+    separately in `PersistedState.strategyScope`. -/
+structure StrategySpec where
+  kind : StrategyKind
+  runTest : Bool := false
+  runLint : Bool := false
+  buildArgs : Array String := #[]
+  testArgs : Array String := #[]
+  lintArgs : Array String := #[]
+  deriving Repr, Inhabited, BEq, ToJson, FromJson
+
 /-- On-disk state schema version; increment whenever `PersistedState` or its nested
     types change in a backward-incompatible way. A mismatch on resume is fatal. -/
-def currentSchemaVersion : Nat := 10
+def currentSchemaVersion : Nat := 11
 
 /--
 Minimal restartable state persisted under `.lake/hopscotch/state.json`.
@@ -123,6 +142,11 @@ structure PersistedState where
   status : RunStatus
   stage : Option RunStage
   lastLogPath : Option System.FilePath
+  /-- How to rebuild the run's strategy + verify configuration when resuming via
+      `hopscotch continue`. `none` in states written before this field existed (and
+      such sessions can't be continued — `continue` reports that and points at the
+      original command). -/
+  strategySpec : Option StrategySpec := none
   /-- Lower-bound dependency ref for the range (the `from`/baseline rev, exclusive of
       `items`). Used by automated fixes to diff the dependency against a known-good
       baseline. `none` for non-range sources (commits-file, toolchain). -/

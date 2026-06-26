@@ -997,6 +997,122 @@ private def «reject changed build-args on resume» : IO Unit := do
       assertContains "verification steps changed since the last run" error.toString
         "changing --build-args should require resetting persisted state"
 
+/-- Scenario: `hopscotch continue` rebuilds the run config from saved state alone — run
+    mode, dependency scope, and the full verify pipeline (including `--test` and build
+    args) — without the original flags being re-specified. -/
+private def «continue reconstructs the run config from saved state» : IO Unit := do
+  withTempDir "hopscotch-continue-reconstruct" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\nbadbuild\n"
+    configureMockLake projectDir "fail-build"
+    -- Create a session with a rich verify config (test enabled + build args).
+    let _ ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+        { runTest := true, buildArgs := #["-Kfoo=bar"] }
+      quiet := true
+    } ignoreOutput
+    match ← CLI.parseArgs ["continue", "--project-dir", projectDir.toString] with
+    | .run cfg =>
+        assertEq .linear cfg.runMode "continue should restore the run mode"
+        assertEq "batteries" cfg.strategy.scope "continue should restore the dependency scope"
+        assertEq #["lake build -Kfoo=bar", "lake test"] (cfg.strategy.verify.map (·.label))
+          "continue should restore the verify steps, including --test and build args"
+        assertTrue (!cfg.autoFixes.isEmpty) "auto-fix should default to enabled on continue"
+        match cfg.itemSource with
+        | .range none none none => pure ()
+        | other => fail s!"continue should resume from the stored item list, got {repr other}"
+    | _ => fail "continue should parse to a run command"
+    -- --no-auto-fix is honored on continue.
+    match ← CLI.parseArgs ["continue", "--project-dir", projectDir.toString, "--no-auto-fix"] with
+    | .run cfg => assertTrue cfg.autoFixes.isEmpty "--no-auto-fix should disable detection on continue"
+    | _ => fail "continue should parse to a run command"
+
+/-- Scenario: the persisted strategy spec round-trips and drives a correct resume — a
+    stopped session reconstructed from state alone finishes, re-running the verify steps
+    (here `lake test`) it was originally configured with. -/
+private def «continue resumes a stopped session to completion» : IO Unit := do
+  withTempDir "hopscotch-continue-resume" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\nbadbuild\ngood2\n"
+    configureMockLake projectDir "fail-build"
+    let first ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand) { runTest := true }
+      quiet := true
+    } ignoreOutput
+    assertEq 1 first.exitCode "first run should stop at the failing build"
+    -- Read back the persisted spec and rebuild the strategy exactly as `continue` does,
+    -- but pointed at the mock lake (production `continue` hardcodes the real `lake`).
+    let paths ← State.mkPaths projectDir
+    let some persisted ← State.load? paths | fail "session state should exist"
+    let some spec := persisted.strategySpec | fail "session should persist a strategy spec"
+    assertEq true spec.runTest "persisted spec should record that --test was enabled"
+    IO.FS.writeFile (mockLakeCallsPath projectDir) ""
+    configureMockLake projectDir "success"
+    let continued ← Runner.run {
+      itemSource := .range none none none
+      projectDir := projectDir
+      runMode := persisted.runMode
+      strategy := Runner.lakefileStrategy persisted.strategyScope (← mockLakeCommand)
+        { runTest := spec.runTest, runLint := spec.runLint
+          buildArgs := spec.buildArgs, testArgs := spec.testArgs, lintArgs := spec.lintArgs }
+      quiet := true
+    } ignoreOutput
+    assertEq 0 continued.exitCode "continue should resume and finish"
+    let state ← loadState paths.statePath
+    assertEq (.fullySuccessful) state.status "resumed run should complete"
+    let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy
+    assertTrue (calls.contains "test:badbuild")
+      "the resumed run should re-run the test step the session was configured with"
+
+/-- Scenario: `continue` with no stored session reports a clear error. -/
+private def «continue without a session errors clearly» : IO Unit := do
+  withTempDir "hopscotch-continue-nosession" fun dir => do
+    let projectDir := dir / "downstream"
+    makeDownstreamProject projectDir
+    try
+      let _ ← CLI.parseArgs ["continue", "--project-dir", projectDir.toString]
+      fail "continue with no stored session should error"
+    catch error =>
+      assertContains "no hopscotch session found" error.toString
+        "continue should report when there is nothing to resume"
+
+/-- Scenario: `continue` on a session predating the strategy spec reports a clear error
+    rather than guessing. -/
+private def «continue on a pre-spec session errors clearly» : IO Unit := do
+  withTempDir "hopscotch-continue-oldsession" fun dir => do
+    let projectDir := dir / "downstream"
+    makeDownstreamProject projectDir
+    let paths ← State.mkPaths projectDir
+    State.save paths {
+      projectDir := paths.projectDir
+      strategyScope := "batteries"
+      verifySteps := some #["lake build"]
+      items := #["good1", "good2"]
+      runMode := .linear
+      nextIndex := 1
+      currentCommit := some "good2"
+      lastSuccessfulCommit := some "good1"
+      status := .running
+      stage := none
+      lastLogPath := none
+      strategySpec := none
+      updatedAt := "2026-01-01T00:00:00Z"
+    }
+    try
+      let _ ← CLI.parseArgs ["continue", "--project-dir", projectDir.toString]
+      fail "continue on a session without a strategy spec should error"
+    catch error =>
+      assertContains "older hopscotch" error.toString
+        "continue should explain that pre-spec sessions can't be resumed"
+
 def suite : TestSuite := #[
   test_case «downstream toolchain command resolution»,
   test_case «stop at first build failure»,
@@ -1031,6 +1147,10 @@ def suite : TestSuite := #[
   test_case «verify-step args are passed to lake»,
   test_case «reject changed build-args on resume»,
   test_case «reject changed verify steps on resume»,
+  test_case «continue reconstructs the run config from saved state»,
+  test_case «continue resumes a stopped session to completion»,
+  test_case «continue without a session errors clearly»,
+  test_case «continue on a pre-spec session errors clearly»,
   test_case «strip GITHUB_TOKEN from lake child env»
 ]
 
