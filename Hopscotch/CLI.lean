@@ -104,6 +104,25 @@ private def loadConfigFile {α : Type _} [Lean.FromJson α] [Inhabited α]
   | none => return default
   | some p => readJsonFile p
 
+/-- Assemble the run strategy for a `kind`/`scope`/`opts` triple. The single place that
+    maps the persisted strategy shape to a `RunStrategy`, shared by `dep`, `toolchain`, and
+    `continue` so they can't drift. `scope` is the dependency name for `.dep` (ignored for
+    `.toolchain`, whose scope is fixed).
+
+    INTERNAL: HOPSCOTCH_SKIP_BUILD drops the verify steps entirely, leaving only the
+    `lake update` bump — for callers that handle build validation separately (e.g. a
+    bump-to-latest action in update-only mode). It applies to `.dep` only (toolchain runs
+    have never consulted it); not part of the public CLI and may change without notice. -/
+private def mkRunStrategy (kind : StrategyKind) (scope : String)
+    (opts : Runner.VerifyOptions) : IO Runner.RunStrategy := do
+  match kind with
+  | .toolchain => return Runner.toolchainStrategy "lake" opts
+  | .dep =>
+      let base := Runner.lakefileStrategy scope "lake" opts
+      match ← IO.getEnv "HOPSCOTCH_SKIP_BUILD" with
+      | some "true" => return { base with verify := #[] }
+      | _           => return base
+
 -- ---------------------------------------------------------------------------
 -- dep subcommand
 -- ---------------------------------------------------------------------------
@@ -207,15 +226,7 @@ private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
         pure <| Runner.ItemSource.range none fromRef gitUrl
   let verifyOpts : Runner.VerifyOptions :=
     { runTest, runLint, buildArgs, testArgs, lintArgs }
-  let baseStrategy := Runner.lakefileStrategy state.dependencyName "lake" verifyOpts
-  -- INTERNAL: HOPSCOTCH_SKIP_BUILD bypasses lake build entirely, leaving only the
-  -- lake update step. Intended for callers that handle build validation separately
-  -- (e.g. bump-to-latest action in update-only mode). Not part of the public CLI
-  -- interface and may be removed or changed without notice.
-  let strategy ←
-    match ← IO.getEnv "HOPSCOTCH_SKIP_BUILD" with
-    | some "true" => pure { baseStrategy with verify := #[] }
-    | _           => pure baseStrategy
+  let strategy ← mkRunStrategy .dep state.dependencyName verifyOpts
   return {
     itemSource := itemSource
     projectDir := projectDir
@@ -305,6 +316,7 @@ private def buildToolchainConfig (state : ToolchainParseState) : IO Runner.Confi
     | none => throw <| IO.userError s!"--toolchains-file is required\n{toolchainUsage}"
   let verifyOpts : Runner.VerifyOptions :=
     { runTest, runLint, buildArgs, testArgs, lintArgs }
+  let strategy ← mkRunStrategy .toolchain "toolchain" verifyOpts
   return {
     itemSource := Runner.ItemSource.file toolchainsFile
     projectDir := projectDir
@@ -313,7 +325,7 @@ private def buildToolchainConfig (state : ToolchainParseState) : IO Runner.Confi
     allowDirtyWorkspace := state.allowDirtyWorkspace
     keepLastGood := state.keepLastGood
     resultsJsonPath := state.resultsJsonPath
-    strategy := Runner.toolchainStrategy "lake" verifyOpts
+    strategy := strategy
   }
 
 private def parseToolchain (args : List String) : IO Runner.Config := do
@@ -415,16 +427,7 @@ private def buildContinueConfig (st : ContinueParseState) : IO Runner.Config := 
   let verifyOpts : Runner.VerifyOptions :=
     { runTest := spec.runTest, runLint := spec.runLint
       buildArgs := spec.buildArgs, testArgs := spec.testArgs, lintArgs := spec.lintArgs }
-  let baseStrategy :=
-    match spec.kind with
-    | .dep       => Runner.lakefileStrategy persisted.strategyScope "lake" verifyOpts
-    | .toolchain => Runner.toolchainStrategy "lake" verifyOpts
-  -- Mirror buildDepConfig's internal skip-build knob so a continued run reproduces the
-  -- original's verify steps when HOPSCOTCH_SKIP_BUILD is set the same way.
-  let strategy ←
-    match ← IO.getEnv "HOPSCOTCH_SKIP_BUILD" with
-    | some "true" => pure { baseStrategy with verify := #[] }
-    | _           => pure baseStrategy
+  let strategy ← mkRunStrategy spec.kind persisted.strategyScope verifyOpts
   return {
     -- A range source with no refs makes `Runner.run` resume from the stored item list
     -- (state exists) rather than re-resolving it; the original source no longer matters.

@@ -1031,6 +1031,30 @@ private def «continue reconstructs the run config from saved state» : IO Unit 
     | .run cfg => assertTrue cfg.autoFixes.isEmpty "--no-auto-fix should disable detection on continue"
     | _ => fail "continue should parse to a run command"
 
+/-- Scenario: `continue` reconstructs a toolchain session too — the strategy kind is
+    restored from state, and its verify steps are preserved (toolchain runs never strip
+    the build step, so neither does continuing one). -/
+private def «continue reconstructs a toolchain session» : IO Unit := do
+  withTempDir "hopscotch-continue-toolchain" fun dir => do
+    let projectDir := dir / "downstream"
+    let listPath := dir / "toolchains.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile listPath "good0\nbadbuild1\n"
+    configureMockLake projectDir "fail-build-toolchain"
+    let _ ← Runner.run {
+      itemSource := .file listPath
+      projectDir := projectDir
+      strategy := Runner.toolchainStrategy (← mockLakeCommand)
+      runMode := .linear
+      quiet := true
+    } ignoreOutput
+    match ← CLI.parseArgs ["continue", "--project-dir", projectDir.toString] with
+    | .run cfg =>
+        assertEq "toolchain" cfg.strategy.scope "continue should rebuild the toolchain strategy"
+        assertEq #["lake build"] (cfg.strategy.verify.map (·.label))
+          "a toolchain session's verify steps should be preserved on continue"
+    | _ => fail "continue should parse to a run command"
+
 /-- Scenario: the persisted strategy spec round-trips and drives a correct resume — a
     stopped session reconstructed from state alone finishes, re-running the verify steps
     (here `lake test`) it was originally configured with. -/
@@ -1148,6 +1172,7 @@ def suite : TestSuite := #[
   test_case «reject changed build-args on resume»,
   test_case «reject changed verify steps on resume»,
   test_case «continue reconstructs the run config from saved state»,
+  test_case «continue reconstructs a toolchain session»,
   test_case «continue resumes a stopped session to completion»,
   test_case «continue without a session errors clearly»,
   test_case «continue on a pre-spec session errors clearly»,
