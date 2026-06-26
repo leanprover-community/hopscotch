@@ -578,6 +578,59 @@ private def «a live shim yields an advisory; the warning log promotes it» : IO
     assertEq #["OtherPkg.New"] foreign.newModules
       "the foreign advisory carries the replacements from the log"
 
+/-- Scenario 9: the boundary log warns about an import whose shim has already been
+    cleaned up at the newest range commit. The shim is no longer at the newest
+    tree, so it is read at the boundary commit itself and promoted to a proposal.
+    Also covers scenario 10: a healthy import of a live, non-shim module
+    (`Demo.New`) produces no record at all. -/
+private def «a warned import whose shim was cleaned up later resolves at the boundary» : IO Unit := do
+  withTempDir "hopscotch-autofix-warn-cleanup" fun dir => do
+    let projectDir := dir / "downstream"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile (projectDir / "lakefile.toml") offlineLakefile
+    -- `Demo.Old` resolves through a shim and is warned; `Demo.New` is a live, real
+    -- module imported directly — it must yield nothing (scenario 10).
+    IO.FS.writeFile (projectDir / "Foo.lean") "import Demo.Old\nimport Demo.New\n"
+    let depDir := projectDir / ".lake" / "packages" / "batteries"
+    IO.FS.createDirAll (depDir / "Demo")
+    IO.FS.writeFile (depDir / "Demo" / "New.lean") "def new := 1\n"
+    -- At the boundary `Demo.Old` is a live shim; a later commit deletes it, so it
+    -- is gone at the newest range commit.
+    IO.FS.writeFile (depDir / "Demo" / "Old.lean")
+      "import Demo.New\n\ndeprecated_module (since := \"2026-01-01\")\n"
+    initializeGitRepo depDir
+    let boundary := (← runGitWithOutput depDir #["rev-parse", "HEAD"]).stdout.trimAscii.copy
+    IO.FS.removeFile (depDir / "Demo" / "Old.lean")
+    commitPaths depDir "chore: delete the cleaned-up shim" #["-A"]
+    let newest := (← runGitWithOutput depDir #["rev-parse", "HEAD"]).stdout.trimAscii.copy
+    runGit depDir #["checkout", "--quiet", boundary]
+    let paths ← mkPaths projectDir
+    IO.FS.createDirAll paths.logsDir
+    let logPath := paths.logsDir / "probe.log"
+    IO.FS.writeFile logPath <| String.intercalate "\n" [
+      "warning: ./Foo.lean:1:0: ",
+      "'Demo.Old' has been deprecated: please replace this import by",
+      "",
+      "import Demo.New",
+      "error: build failed due to warnings"
+    ]
+    let ctx : FixContext := {
+      projectDir := paths.projectDir
+      paths := paths
+      dependencyName := "batteries"
+      items := #[boundary, newest]
+      currentCommit := boundary
+      baseline := boundary
+      buildLogPath := some logPath
+      quiet := true
+    }
+    let det ← detectFixes #[moduleDeprecationFix] ctx ignoreOutput
+    assertEq 1 det.migrations.size "the warned, since-cleaned-up shim is read at the boundary and proposed"
+    assertEq "Demo.Old" (det.migrations[0]!).oldModule "the deprecated module is recorded"
+    assertEq #["Demo.New"] (det.migrations[0]!).newModules "the replacement comes from the boundary shim"
+    assertTrue (det.migrations.all (·.oldModule != "Demo.New") && det.advisories.all (·.oldModule != "Demo.New"))
+      "a healthy import of a live, non-shim module produces no record (scenario 10)"
+
 /-- The full iterative protocol against a dependency history with a deprecation
     window (delete `Demo.Old` at c1, re-add as shim at c2) followed by a genuine
     break (delete `Demo.Other` at c4):
@@ -1031,7 +1084,8 @@ def gitSuite : TestSuite := #[
   test_case «green run records deprecated-import advisories»,
   test_case «end-to-end linear: boundary proposed, fix applied, re-run finds the real break»,
   test_case «end-to-end bisect: window boundary reported with proposed fix»,
-  test_case «a renamed module resolves to its rename target»
+  test_case «a renamed module resolves to its rename target»,
+  test_case «a warned import whose shim was cleaned up later resolves at the boundary»
 ]
 
 end HopscotchTestLib.AutoFixTests
