@@ -21,6 +21,14 @@ private def assertParseError (args : List String) (hint : String) : IO Unit := d
   catch _ =>
     pure ()
 
+/-- Assert that parsing the given args yields a `fix` command and return its config. -/
+private def parseFix (args : List String) : IO FixCommand.Config := do
+  match ← CLI.parseArgs args with
+  | .fix config => return config
+  | .run _ => throw <| IO.userError "expected fix command, got run"
+  | .clean _ => throw <| IO.userError "expected fix command, got clean"
+  | .help | .version => throw <| IO.userError "expected fix command, got help/version"
+
 -- ---------------------------------------------------------------------------
 -- dep: valid parses
 -- ---------------------------------------------------------------------------
@@ -304,6 +312,44 @@ private def «toolchain --toolchains-file with no following argument is rejected
   assertParseError ["toolchain", "--toolchains-file"]
     "--toolchains-file at end of args should fail, not silently use an empty path"
 
+-- ---------------------------------------------------------------------------
+-- fix subcommand
+-- ---------------------------------------------------------------------------
+
+/-- Scenario: `fix apply` parses to the apply action with default options. -/
+private def «fix apply defaults» : IO Unit := do
+  let config ← parseFix ["fix", "apply"]
+  assertEq FixCommand.Action.apply config.action "action should be apply"
+  assertEq "." config.projectDir.toString "project dir defaults to ."
+  assertEq (none : Option String) (config.fromPath.map (·.toString)) "fromPath defaults to none"
+  assertEq true config.includeAdvisories "advisories included by default"
+
+/-- Scenario: the `list` and `revert` actions parse. -/
+private def «fix list and revert actions» : IO Unit := do
+  assertEq FixCommand.Action.list (← parseFix ["fix", "list"]).action "list action"
+  assertEq FixCommand.Action.revert (← parseFix ["fix", "revert"]).action "revert action"
+
+/-- Scenario: `fix apply --project-dir DIR --from PATH --no-advisories` fills every field. -/
+private def «fix apply with all options» : IO Unit := do
+  let config ← parseFix
+    ["fix", "apply", "--project-dir", "/p/proj", "--from", "/p/results.json", "--no-advisories"]
+  assertEq FixCommand.Action.apply config.action "action should be apply"
+  assertEq "/p/proj" config.projectDir.toString "project dir is parsed"
+  assertEq (some "/p/results.json") (config.fromPath.map (·.toString)) "--from path is parsed"
+  assertEq false config.includeAdvisories "--no-advisories disables advisories"
+
+/-- Scenario: `fix` with no action is rejected. -/
+private def «fix no action» : IO Unit :=
+  assertParseError ["fix"] "fix without an action should fail"
+
+/-- Scenario: `fix bogus` (an unrecognized action) is rejected. -/
+private def «fix bad action» : IO Unit :=
+  assertParseError ["fix", "bogus"] "fix with an unknown action should fail"
+
+/-- Scenario: an unknown flag under `fix` is rejected. -/
+private def «fix unknown flag» : IO Unit :=
+  assertParseError ["fix", "apply", "--unknown"] "unknown flag under fix"
+
 def suite : TestSuite := #[
   test_case «dep range source»,
   test_case «dep file source»,
@@ -342,6 +388,12 @@ def suite : TestSuite := #[
   test_case «toolchain config file»,
   test_case «toolchain no file»,
   test_case «toolchain unknown flag»,
+  test_case «fix apply defaults»,
+  test_case «fix list and revert actions»,
+  test_case «fix apply with all options»,
+  test_case «fix no action»,
+  test_case «fix bad action»,
+  test_case «fix unknown flag»,
   test_case «no args»,
   test_case «unknown subcommand»,
   test_case «dep --commits-file with no following argument is rejected»,

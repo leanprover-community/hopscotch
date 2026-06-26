@@ -916,6 +916,92 @@ private def «hopscotch fix rejects a results.json from an incompatible schema»
     assertTrue ((← IO.FS.readFile (projectDir / "Foo.lean")).contains "import Demo.Old")
       "a rejected fix command leaves the workspace untouched"
 
+/-- A `results.json` produced on one machine (e.g. CI) applies to a different,
+    pristine checkout via `--from` — the basis for an automated "fix breaking
+    changes" PR. The migration is portable: nothing in it depends on the checkout
+    it was detected against, and the backup store lands in the target project. -/
+private def «fix apply --from applies a results.json produced elsewhere» : IO Unit := do
+  withTempDir "hopscotch-fix-from" fun dir => do
+    -- "CI" side: record a proposal and write its results.json, against its checkout.
+    let ciDir := dir / "ci"
+    makeDownstreamProject ciDir
+    let ciPaths ← mkPaths ciDir
+    let ciState : PersistedState := {
+      projectDir := ciPaths.projectDir
+      strategyScope := "batteries"
+      items := #["c0", "c1"]
+      nextIndex := 1
+      currentCommit := some "c1"
+      lastSuccessfulCommit := some "c0"
+      status := .stopped
+      stage := some .build
+      lastLogPath := none
+      proposedFixes := #[{
+        fixId := "module-deprecation", oldModule := "Demo.Old", newModules := #["Demo.New"] }]
+      updatedAt := "2026-01-01T00:00:00Z"
+    }
+    Hopscotch.Results.writeResults ciPaths none ciState
+
+    -- "Developer" side: a fresh checkout with the broken import and no run of its own.
+    let devDir := dir / "dev"
+    makeDownstreamProject devDir
+    IO.FS.writeFile (devDir / "Foo.lean") "import Demo.Old\n"
+    let devPaths ← mkPaths devDir
+
+    let applyCode ← Hopscotch.FixCommand.run
+      { action := .apply, projectDir := devDir, fromPath := some ciPaths.resultsPath } ignoreOutput
+    assertEq 0 applyCode "apply --from succeeds"
+    assertTrue ((← IO.FS.readFile (devDir / "Foo.lean")).contains "import Demo.New")
+      "the migration from the foreign results.json rewrites the dev checkout"
+    assertTrue (← (backupRoot devPaths).pathExists)
+      "the backup lands in the dev project's own store, not the CI one"
+
+    -- revert (no --from) restores from the dev project's own backup store.
+    let revertCode ← Hopscotch.FixCommand.run { action := .revert, projectDir := devDir } ignoreOutput
+    assertEq 0 revertCode "revert succeeds on the dev checkout"
+    assertTrue ((← IO.FS.readFile (devDir / "Foo.lean")).contains "import Demo.Old")
+      "revert restores the original import on the dev checkout"
+
+/-- When upstream moves a module with `git`-detectable similarity (a rename, no
+    shim ever), the deletion's rename target is the replacement: `import Old →
+    import New`, a complete (non-partial) fix. -/
+private def «a renamed module resolves to its rename target» : IO Unit := do
+  withTempDir "hopscotch-autofix-rename" fun dir => do
+    let projectDir := dir / "downstream"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile (projectDir / "Foo.lean") "import Demo.Old\n\ndef hello := 1\n"
+    let depDir := projectDir / ".lake" / "packages" / "batteries"
+    IO.FS.createDirAll (depDir / "Demo")
+    -- Substantial content so git's similarity detection sees the move as a rename.
+    let body := "-- Demo module\ndef thing : Nat := 42\ndef other : Nat := 43\ndef more : Nat := 44\n"
+    IO.FS.writeFile (depDir / "Demo" / "Old.lean") body
+    initializeGitRepo depDir
+    let baseline := (← runGitWithOutput depDir #["rev-parse", "HEAD"]).stdout.trimAscii.copy
+    -- Move Old.lean to New.lean with identical content and no shim.
+    IO.FS.removeFile (depDir / "Demo" / "Old.lean")
+    IO.FS.writeFile (depDir / "Demo" / "New.lean") body
+    commitPaths depDir "move: rename Demo.Old to Demo.New" #["-A"]
+    let renameCommit := (← runGitWithOutput depDir #["rev-parse", "HEAD"]).stdout.trimAscii.copy
+    runGit depDir #["checkout", "--quiet", renameCommit]
+
+    let paths ← mkPaths projectDir
+    let ctx : FixContext := {
+      projectDir := paths.projectDir
+      paths := paths
+      dependencyName := "batteries"
+      items := #[renameCommit]
+      currentCommit := renameCommit
+      baseline := baseline
+      buildLogPath := none
+      quiet := true
+    }
+    let det ← detectFixes #[moduleDeprecationFix] ctx ignoreOutput
+    assertEq 1 det.migrations.size "the rename is proposed as a migration"
+    let m := det.migrations[0]!
+    assertEq "Demo.Old" m.oldModule "the moved module is recorded"
+    assertEq #["Demo.New"] m.newModules "the replacement is the rename target"
+    assertTrue (!m.partialFix) "a mechanical rename is a complete fix"
+
 /-- Pure + MockLake tests (no git required). -/
 def suite : TestSuite := #[
   test_case «module name ↔ relative path»,
@@ -931,7 +1017,8 @@ def suite : TestSuite := #[
   test_case «hopscotch fix list/apply/revert round-trips a proposed migration»,
   test_case «fix apply migrates advisories by default; --no-advisories restricts to proposals»,
   test_case «hopscotch fix apply skips unknown fix types»,
-  test_case «hopscotch fix rejects a results.json from an incompatible schema»
+  test_case «hopscotch fix rejects a results.json from an incompatible schema»,
+  test_case «fix apply --from applies a results.json produced elsewhere»
 ]
 
 /-- Tests that drive real `git` over a fake dependency history. -/
@@ -943,7 +1030,8 @@ def gitSuite : TestSuite := #[
   test_case «a live shim yields an advisory; the warning log promotes it»,
   test_case «green run records deprecated-import advisories»,
   test_case «end-to-end linear: boundary proposed, fix applied, re-run finds the real break»,
-  test_case «end-to-end bisect: window boundary reported with proposed fix»
+  test_case «end-to-end bisect: window boundary reported with proposed fix»,
+  test_case «a renamed module resolves to its rename target»
 ]
 
 end HopscotchTestLib.AutoFixTests

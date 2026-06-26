@@ -45,6 +45,17 @@ structure Config where
     2 on a user-facing error such as a missing results file). -/
 def run (config : Config) (output : String → IO Unit := IO.println) : IO UInt32 := do
   let paths ← mkPaths config.projectDir
+  -- `revert` consults only the backup store — itself the record of what `apply`
+  -- touched — so it needs no results.json. Handle it before the results gate,
+  -- since a checkout that received a cross-machine `apply --from` has backups but
+  -- never produced a results.json of its own.
+  if config.action == .revert then
+    let restored ← restoreAllBackups paths config.projectDir
+    if restored.isEmpty then
+      output "No backups found to restore (originals already in place, or backups were cleaned)."
+    else
+      output s!"Restored {restored.size} file(s) from backups: {String.intercalate ", " restored.toList}"
+    return 0
   let resultsPath := config.fromPath.getD paths.resultsPath
   unless ← resultsPath.pathExists do
     output s!"no results file at {resultsPath}; run a `hopscotch dep` bisection first, \
@@ -124,13 +135,7 @@ def run (config : Config) (output : String → IO Unit := IO.println) : IO UInt3
       output s!"Applied {applied} migration(s); rewrote {changed.size} file(s) in {config.projectDir}."
       return 0
   | .revert =>
-      -- The backup store mirrors project-relative paths and is itself the record
-      -- of what `apply` touched, so revert needs no migration metadata.
-      let restored ← restoreAllBackups paths config.projectDir
-      if restored.isEmpty then
-        output "No backups found to restore (originals already in place, or backups were cleaned)."
-      else
-        output s!"Restored {restored.size} file(s) from backups: {String.intercalate ", " restored.toList}"
+      -- Unreachable: `revert` is handled above, before the results.json gate.
       return 0
 
 end Hopscotch.FixCommand
