@@ -1053,6 +1053,8 @@ private def «continue reconstructs a toolchain session» : IO Unit := do
         assertEq "toolchain" cfg.strategy.scope "continue should rebuild the toolchain strategy"
         assertEq #["lake build"] (cfg.strategy.verify.map (·.label))
           "a toolchain session's verify steps should be preserved on continue"
+        assertTrue cfg.autoFixes.isEmpty
+          "continue should not enable auto-fix on a toolchain session (matching the original run)"
     | _ => fail "continue should parse to a run command"
 
 /-- Scenario: the persisted strategy spec round-trips and drives a correct resume — a

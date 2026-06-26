@@ -416,6 +416,9 @@ private def parseContinueOptions (state : ContinueParseState)
 private def buildContinueConfig (st : ContinueParseState) : IO Runner.Config := do
   let projectDir := st.projectDir.getD "."
   let paths ← State.mkPaths projectDir
+  -- `Runner.run` re-reads this state below (its resume path), so `state.json` is parsed
+  -- twice per continue. Negligible for a one-shot command on a tiny file, and it keeps
+  -- continue on the shared run path rather than a bespoke resume entry point.
   let some persisted ← State.load? paths
     | throw <| IO.userError
         s!"no hopscotch session found at {paths.statePath}; \
@@ -438,7 +441,10 @@ private def buildContinueConfig (st : ContinueParseState) : IO Runner.Config := 
     allowDirtyWorkspace := st.allowDirtyWorkspace
     keepLastGood := st.keepLastGood
     resultsJsonPath := st.resultsJsonPath
-    autoFixes := if st.autoFix then Hopscotch.AutoFix.standardAutoFixes else #[]
+    -- Auto-fix detection is a `dep`-only feature (toolchain runs never enable it), so a
+    -- continued toolchain session matches the original by leaving it off regardless of
+    -- `--no-auto-fix`/`--auto-fix`.
+    autoFixes := if st.autoFix && spec.kind == .dep then Hopscotch.AutoFix.standardAutoFixes else #[]
     strategy := strategy
   }
 
