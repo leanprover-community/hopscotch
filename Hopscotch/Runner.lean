@@ -274,7 +274,13 @@ private def runAdvance (config : Config) (paths : Paths) (commits : Array String
               let buildLogPath := State.logPath paths (config.strategy.logPrefix index index) commit .build
               emit .failure
                 s!"[{← nowUtcString}] Resume blocked: commit the fix for {commit} or rerun with --allow-dirty-workspace"
-              let (_, summary) ← saveState paths config.resultsJsonPath <| buildFailureState state index commit .gitCheck buildLogPath
+              -- Run detection here too (mirroring the build-failure path above), so a
+              -- dirty-block stop preserves advisories/notes in results.json rather than
+              -- overwriting them with the cleared resume state. The commit built, so the
+              -- boundary-proposal branch finds nothing — only live-shim advisories surface.
+              let stopped ← attachProposedFixes config paths
+                (buildFailureState state index commit .gitCheck buildLogPath) emit buildLog
+              let (_, summary) ← saveState paths config.resultsJsonPath stopped
               copyCulpritLog paths buildLogPath
               return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
         if resumedFailedCommit && index == resumeIndex then

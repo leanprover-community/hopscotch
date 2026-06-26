@@ -116,6 +116,11 @@ def run (config : Config) (output : String → IO Unit := IO.println) : IO UInt3
       -- Dispatch each migration to its owning fix via the registry; a results.json
       -- written by a newer hopscotch could carry fix types this build does not
       -- know, which are skipped loudly rather than misread.
+      -- Note: this dispatches only against `standardAutoFixes`. A `results.json`
+      -- produced by a *library* caller that injected a custom `Config.autoFixes`
+      -- registry will record migrations the CLI `fix apply` cannot resolve — those
+      -- are skipped here as "unknown fix type". Custom fixes must be applied by the
+      -- same caller, not via this subcommand.
       -- Group migrations by their owning fix and apply each fix once, so the
       -- workspace is walked a single time per fix rather than once per migration.
       let mut fixIds : Array String := #[]
