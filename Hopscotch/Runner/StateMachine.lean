@@ -290,7 +290,7 @@ def buildBisectAllPassState (base : PersistedState) (bisect : BisectState)
 /-- Create the initial persisted state for a fresh linear-mode session. -/
 private def mkInitialAdvanceState (paths : Paths) (strategyScope : String)
     (verifySteps : Array String) (commits : Array String)
-    (lowerBoundRef : Option String) : IO PersistedState := do
+    (lowerBoundRef : Option String) (strategySpec : StrategySpec) : IO PersistedState := do
   let updatedAt ← nowUtcString
   return {
     projectDir := paths.projectDir
@@ -304,6 +304,7 @@ private def mkInitialAdvanceState (paths : Paths) (strategyScope : String)
     status := .running
     stage := none
     lastLogPath := none
+    strategySpec := some strategySpec
     lowerBoundRef := lowerBoundRef
     updatedAt := updatedAt
   }
@@ -311,7 +312,7 @@ private def mkInitialAdvanceState (paths : Paths) (strategyScope : String)
 /-- Create the initial persisted state for a fresh bisect session. -/
 private def mkInitialBisectState (paths : Paths) (strategyScope : String)
     (verifySteps : Array String) (commits : Array String)
-    (lowerBoundRef : Option String) : IO PersistedState := do
+    (lowerBoundRef : Option String) (strategySpec : StrategySpec) : IO PersistedState := do
   if commits.size < 2 then
     throw <| IO.userError "bisect mode requires at least 2 commits"
   let updatedAt ← nowUtcString
@@ -338,9 +339,21 @@ private def mkInitialBisectState (paths : Paths) (strategyScope : String)
     status := .running
     stage := none
     lastLogPath := none
+    strategySpec := some strategySpec
     lowerBoundRef := lowerBoundRef
     updatedAt := updatedAt
   }
+
+/-- Derive the serializable `StrategySpec` for a run from its strategy, so a later
+    `hopscotch continue` can rebuild it. -/
+private def strategySpecOf (strategy : RunStrategy) : StrategySpec :=
+  let opts := strategy.verifyOptions
+  { kind := strategy.kind
+    runTest := opts.runTest
+    runLint := opts.runLint
+    buildArgs := opts.buildArgs
+    testArgs := opts.testArgs
+    lintArgs := opts.lintArgs }
 
 /--
 Load persisted state for this checkout or create the initial state for a fresh run.
@@ -352,11 +365,12 @@ original run.
 def loadInitialState (paths : Paths) (config : Config)
     (commits : Array String) (lowerBoundRef : Option String) : IO PersistedState := do
   let verifySteps := config.strategy.verify.map (·.label)
+  let strategySpec := strategySpecOf config.strategy
   match ← State.load? paths with
   | none =>
       match config.runMode with
-      | .linear => mkInitialAdvanceState paths config.strategy.scope verifySteps commits lowerBoundRef
-      | .bisect => mkInitialBisectState paths config.strategy.scope verifySteps commits lowerBoundRef
+      | .linear => mkInitialAdvanceState paths config.strategy.scope verifySteps commits lowerBoundRef strategySpec
+      | .bisect => mkInitialBisectState paths config.strategy.scope verifySteps commits lowerBoundRef strategySpec
   | some state =>
       if state.schemaVersion != currentSchemaVersion then
         throw <| IO.userError

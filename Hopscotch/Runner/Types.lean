@@ -44,6 +44,12 @@ structure VerifyOptions where
 structure RunStrategy where
   /-- Identity string used for resume validation and state persistence. Should roughly correspond to 'what is being bumped' -/
   scope : String
+  /-- Which builder produced this strategy. Persisted (with `verifyOptions`) so that
+      `hopscotch continue` can rebuild it from saved state. -/
+  kind : StrategyKind := .dep
+  /-- The verify options this strategy was built from. Persisted so `hopscotch continue`
+      can reconstruct the same verify pipeline (`verify`'s closures aren't serializable). -/
+  verifyOptions : VerifyOptions := {}
   /-- Construct the bump step for a specific version. Called once per probe. -/
   mkBump : String → ProbeStep
   /-- Ordered steps to verify the project after bumping. -/

@@ -32,18 +32,25 @@ def toolchainUsage : String :=
 def fixUsage : String :=
   "usage: hopscotch fix <apply|revert|list> [--project-dir DIR] [--from RESULTS_JSON] [--no-advisories]"
 
+/-- Shared usage text for `hopscotch continue`. -/
+def continueUsage : String :=
+  "usage: hopscotch continue [--project-dir DIR] [--quiet] [--allow-dirty-workspace] " ++
+  "[--keep-last-good] [--no-auto-fix] [--results-json PATH]"
+
 def helpText : String :=
   "hopscotch — binary-search or linearly scan dependency commits to find a regression\n\n" ++
   "usage: hopscotch <subcommand> [OPTIONS]\n\n" ++
   "Subcommands:\n" ++
   "  dep <name>   Bisect/scan a dependency's commit range\n" ++
   "  toolchain    Bisect/scan a list of toolchain strings\n" ++
+  "  continue     Resume the stored session using its saved options\n" ++
   "  fix          Apply/list/revert automated fixes recorded by a run\n" ++
   "  clean        Remove session state (.lake/hopscotch/)\n\n" ++
   "Global flags:\n" ++
   "  --help, -h   Show this help text\n" ++
   "  --version    Print version and exit\n\n" ++
   depUsage ++ "\n\n" ++ toolchainUsage ++ "\n\n" ++
+  continueUsage ++ "\n\n" ++
   fixUsage ++ "\n\n" ++
   "usage: hopscotch clean [--project-dir DIR]"
 
@@ -96,6 +103,23 @@ private def loadConfigFile {α : Type _} [Lean.FromJson α] [Inhabited α]
   match path with
   | none => return default
   | some p => readJsonFile p
+
+/-- Assemble the run strategy for a `kind`/`scope`/`opts` triple. The single place that
+    maps the persisted strategy shape to a `RunStrategy`, shared by `dep`, `toolchain`, and
+    `continue` so they can't drift. `scope` is the dependency name for `.dep` (ignored for
+    `.toolchain`, whose scope is fixed).
+
+    `skipBuild` drops the verify steps entirely (`.dep` only — toolchain runs never strip
+    them), leaving just the `lake update` bump. New runs derive it from HOPSCOTCH_SKIP_BUILD
+    (see `buildDepConfig`); `continue` derives it from the *persisted* verify steps, so a
+    resume reproduces the original run regardless of the current environment. -/
+private def mkRunStrategy (kind : StrategyKind) (scope : String)
+    (opts : Runner.VerifyOptions) (skipBuild : Bool) : Runner.RunStrategy :=
+  match kind with
+  | .toolchain => Runner.toolchainStrategy "lake" opts
+  | .dep =>
+      let base := Runner.lakefileStrategy scope "lake" opts
+      if skipBuild then { base with verify := #[] } else base
 
 -- ---------------------------------------------------------------------------
 -- dep subcommand
@@ -200,15 +224,10 @@ private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
         pure <| Runner.ItemSource.range none fromRef gitUrl
   let verifyOpts : Runner.VerifyOptions :=
     { runTest, runLint, buildArgs, testArgs, lintArgs }
-  let baseStrategy := Runner.lakefileStrategy state.dependencyName "lake" verifyOpts
-  -- INTERNAL: HOPSCOTCH_SKIP_BUILD bypasses lake build entirely, leaving only the
-  -- lake update step. Intended for callers that handle build validation separately
-  -- (e.g. bump-to-latest action in update-only mode). Not part of the public CLI
-  -- interface and may be removed or changed without notice.
-  let strategy ←
-    match ← IO.getEnv "HOPSCOTCH_SKIP_BUILD" with
-    | some "true" => pure { baseStrategy with verify := #[] }
-    | _           => pure baseStrategy
+  -- INTERNAL: HOPSCOTCH_SKIP_BUILD drops the verify steps, leaving only `lake update` —
+  -- for callers that validate builds separately. Not part of the public CLI; may change.
+  let skipBuild := (← IO.getEnv "HOPSCOTCH_SKIP_BUILD") == some "true"
+  let strategy := mkRunStrategy .dep state.dependencyName verifyOpts skipBuild
   return {
     itemSource := itemSource
     projectDir := projectDir
@@ -298,6 +317,7 @@ private def buildToolchainConfig (state : ToolchainParseState) : IO Runner.Confi
     | none => throw <| IO.userError s!"--toolchains-file is required\n{toolchainUsage}"
   let verifyOpts : Runner.VerifyOptions :=
     { runTest, runLint, buildArgs, testArgs, lintArgs }
+  let strategy := mkRunStrategy .toolchain "toolchain" verifyOpts (skipBuild := false)
   return {
     itemSource := Runner.ItemSource.file toolchainsFile
     projectDir := projectDir
@@ -306,7 +326,7 @@ private def buildToolchainConfig (state : ToolchainParseState) : IO Runner.Confi
     allowDirtyWorkspace := state.allowDirtyWorkspace
     keepLastGood := state.keepLastGood
     resultsJsonPath := state.resultsJsonPath
-    strategy := Runner.toolchainStrategy "lake" verifyOpts
+    strategy := strategy
   }
 
 private def parseToolchain (args : List String) : IO Runner.Config := do
@@ -357,6 +377,86 @@ private def parseFix (args : List String) : IO FixCommand.Config := do
       throw <| IO.userError fixUsage
 
 -- ---------------------------------------------------------------------------
+-- continue subcommand
+-- ---------------------------------------------------------------------------
+
+private structure ContinueParseState where
+  projectDir : Option System.FilePath := none
+  quiet : Bool := false
+  allowDirtyWorkspace : Bool := false
+  keepLastGood : Bool := false
+  resultsJsonPath : Option System.FilePath := none
+  autoFix : Bool := true
+
+private def parseContinueOptions (state : ContinueParseState)
+    (args : List String) : IO ContinueParseState := do
+  match args with
+  | [] => return state
+  | "--project-dir" :: dir :: rest =>
+      parseContinueOptions { state with projectDir := some (System.FilePath.mk dir) } rest
+  | "--results-json" :: path :: rest =>
+      parseContinueOptions { state with resultsJsonPath := some (System.FilePath.mk path) } rest
+  | "--quiet" :: rest =>
+      parseContinueOptions { state with quiet := true } rest
+  | "--allow-dirty-workspace" :: rest =>
+      parseContinueOptions { state with allowDirtyWorkspace := true } rest
+  | "--keep-last-good" :: rest =>
+      parseContinueOptions { state with keepLastGood := true } rest
+  | "--no-auto-fix" :: rest =>
+      parseContinueOptions { state with autoFix := false } rest
+  | "--auto-fix" :: rest =>
+      parseContinueOptions { state with autoFix := true } rest
+  | _ =>
+      throw <| IO.userError continueUsage
+
+/-- Reconstruct a run `Config` from the stored session so it can be resumed without
+    re-specifying the original options. The item list, run mode, and verify
+    configuration come from `state.json`; only the "how to run" flags (project dir,
+    quiet, dirty-workspace, keep-last-good, auto-fix, results mirror) come from the
+    `continue` invocation, since none of those affect what pass/fail means. -/
+private def buildContinueConfig (st : ContinueParseState) : IO Runner.Config := do
+  let projectDir := st.projectDir.getD "."
+  let paths ← State.mkPaths projectDir
+  -- `Runner.run` re-reads this state below (its resume path), so `state.json` is parsed
+  -- twice per continue. Negligible for a one-shot command on a tiny file, and it keeps
+  -- continue on the shared run path rather than a bespoke resume entry point.
+  let some persisted ← State.load? paths
+    | throw <| IO.userError
+        s!"no hopscotch session found at {paths.statePath}; \
+           run `hopscotch dep` or `hopscotch toolchain` first"
+  let some spec := persisted.strategySpec
+    | throw <| IO.userError
+        "this session was created by an older hopscotch and can't be continued; \
+         re-run the original dep/toolchain command (or `hopscotch clean` and start over)"
+  let verifyOpts : Runner.VerifyOptions :=
+    { runTest := spec.runTest, runLint := spec.runLint
+      buildArgs := spec.buildArgs, testArgs := spec.testArgs, lintArgs := spec.lintArgs }
+  -- Derive skip-build from the persisted verify steps (empty ⇒ build was skipped), not the
+  -- live HOPSCOTCH_SKIP_BUILD, so the resume reproduces the original run's pass/fail meaning
+  -- regardless of the current environment.
+  let skipBuild := persisted.verifySteps == some #[]
+  let strategy := mkRunStrategy spec.kind persisted.strategyScope verifyOpts skipBuild
+  return {
+    -- A range source with no refs makes `Runner.run` resume from the stored item list
+    -- (state exists) rather than re-resolving it; the original source no longer matters.
+    itemSource := Runner.ItemSource.range none none none
+    projectDir := projectDir
+    runMode := persisted.runMode
+    quiet := st.quiet
+    allowDirtyWorkspace := st.allowDirtyWorkspace
+    keepLastGood := st.keepLastGood
+    resultsJsonPath := st.resultsJsonPath
+    -- Auto-fix detection is a `dep`-only feature (toolchain runs never enable it), so a
+    -- continued toolchain session matches the original by leaving it off regardless of
+    -- `--no-auto-fix`/`--auto-fix`.
+    autoFixes := if st.autoFix && spec.kind == .dep then Hopscotch.AutoFix.standardAutoFixes else #[]
+    strategy := strategy
+  }
+
+private def parseContinue (args : List String) : IO Runner.Config := do
+  buildContinueConfig (← parseContinueOptions {} args)
+
+-- ---------------------------------------------------------------------------
 -- Entrypoint
 -- ---------------------------------------------------------------------------
 
@@ -376,6 +476,7 @@ def parseArgs (args : List String) : IO Command := do
   | "-h" :: _           => return .help
   | "dep" :: rest       => return .run (← parseDep rest)
   | "toolchain" :: rest => return .run (← parseToolchain rest)
+  | "continue" :: rest  => return .run (← parseContinue rest)
   | "fix" :: rest       => return .fix (← parseFix rest)
   | "clean" :: rest     =>
       let projectDir ← parseCleanOptions none rest

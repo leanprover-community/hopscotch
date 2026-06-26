@@ -143,6 +143,8 @@ fails the probe.
 def lakefileStrategy (dependencyName lakeCommand : String)
     (opts : VerifyOptions := {}) : RunStrategy := {
   scope := dependencyName
+  kind := .dep
+  verifyOptions := opts
   mkBump := fun version => {
     stage := .bump
     label := s!"lake update {dependencyName}"
@@ -185,6 +187,8 @@ resolution.
 def toolchainStrategy (lakeCommand : String)
     (opts : VerifyOptions := {}) : RunStrategy := {
   scope := "toolchain"
+  kind := .toolchain
+  verifyOptions := opts
   mkBump := fun version => {
     stage := .bump
     label := s!"write lean-toolchain {version}"
