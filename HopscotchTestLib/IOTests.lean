@@ -1098,6 +1098,30 @@ private def «continue resumes a stopped session to completion» : IO Unit := do
     assertTrue (calls.contains "test:badbuild")
       "the resumed run should re-run the test step the session was configured with"
 
+/-- Scenario: `continue` reconstructs skip-build (empty verify) from the saved state, not
+    from the live `HOPSCOTCH_SKIP_BUILD` env — so a session whose verify steps were stripped
+    resumes with the same (empty) pipeline rather than tripping the resume validation. -/
+private def «continue preserves a stripped (skip-build) verify pipeline» : IO Unit := do
+  withTempDir "hopscotch-continue-skipbuild" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\nbadbuild\n"
+    configureMockLake projectDir "fail-build"
+    -- A run with no verify steps (the effect of HOPSCOTCH_SKIP_BUILD); persists verifySteps = [].
+    let baseStrategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+    let _ ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := { baseStrategy with verify := #[] }
+      quiet := true
+    } ignoreOutput
+    match ← CLI.parseArgs ["continue", "--project-dir", projectDir.toString] with
+    | .run cfg =>
+        assertTrue cfg.strategy.verify.isEmpty
+          "continue should preserve the stripped verify pipeline from saved state"
+    | _ => fail "continue should parse to a run command"
+
 /-- Scenario: `continue` with no stored session reports a clear error. -/
 private def «continue without a session errors clearly» : IO Unit := do
   withTempDir "hopscotch-continue-nosession" fun dir => do
@@ -1176,6 +1200,7 @@ def suite : TestSuite := #[
   test_case «continue reconstructs the run config from saved state»,
   test_case «continue reconstructs a toolchain session»,
   test_case «continue resumes a stopped session to completion»,
+  test_case «continue preserves a stripped (skip-build) verify pipeline»,
   test_case «continue without a session errors clearly»,
   test_case «continue on a pre-spec session errors clearly»,
   test_case «strip GITHUB_TOKEN from lake child env»

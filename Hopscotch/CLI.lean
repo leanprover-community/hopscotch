@@ -109,19 +109,17 @@ private def loadConfigFile {α : Type _} [Lean.FromJson α] [Inhabited α]
     `continue` so they can't drift. `scope` is the dependency name for `.dep` (ignored for
     `.toolchain`, whose scope is fixed).
 
-    INTERNAL: HOPSCOTCH_SKIP_BUILD drops the verify steps entirely, leaving only the
-    `lake update` bump — for callers that handle build validation separately (e.g. a
-    bump-to-latest action in update-only mode). It applies to `.dep` only (toolchain runs
-    have never consulted it); not part of the public CLI and may change without notice. -/
+    `skipBuild` drops the verify steps entirely (`.dep` only — toolchain runs never strip
+    them), leaving just the `lake update` bump. New runs derive it from HOPSCOTCH_SKIP_BUILD
+    (see `buildDepConfig`); `continue` derives it from the *persisted* verify steps, so a
+    resume reproduces the original run regardless of the current environment. -/
 private def mkRunStrategy (kind : StrategyKind) (scope : String)
-    (opts : Runner.VerifyOptions) : IO Runner.RunStrategy := do
+    (opts : Runner.VerifyOptions) (skipBuild : Bool) : Runner.RunStrategy :=
   match kind with
-  | .toolchain => return Runner.toolchainStrategy "lake" opts
+  | .toolchain => Runner.toolchainStrategy "lake" opts
   | .dep =>
       let base := Runner.lakefileStrategy scope "lake" opts
-      match ← IO.getEnv "HOPSCOTCH_SKIP_BUILD" with
-      | some "true" => return { base with verify := #[] }
-      | _           => return base
+      if skipBuild then { base with verify := #[] } else base
 
 -- ---------------------------------------------------------------------------
 -- dep subcommand
@@ -226,7 +224,10 @@ private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
         pure <| Runner.ItemSource.range none fromRef gitUrl
   let verifyOpts : Runner.VerifyOptions :=
     { runTest, runLint, buildArgs, testArgs, lintArgs }
-  let strategy ← mkRunStrategy .dep state.dependencyName verifyOpts
+  -- INTERNAL: HOPSCOTCH_SKIP_BUILD drops the verify steps, leaving only `lake update` —
+  -- for callers that validate builds separately. Not part of the public CLI; may change.
+  let skipBuild := (← IO.getEnv "HOPSCOTCH_SKIP_BUILD") == some "true"
+  let strategy := mkRunStrategy .dep state.dependencyName verifyOpts skipBuild
   return {
     itemSource := itemSource
     projectDir := projectDir
@@ -316,7 +317,7 @@ private def buildToolchainConfig (state : ToolchainParseState) : IO Runner.Confi
     | none => throw <| IO.userError s!"--toolchains-file is required\n{toolchainUsage}"
   let verifyOpts : Runner.VerifyOptions :=
     { runTest, runLint, buildArgs, testArgs, lintArgs }
-  let strategy ← mkRunStrategy .toolchain "toolchain" verifyOpts
+  let strategy := mkRunStrategy .toolchain "toolchain" verifyOpts (skipBuild := false)
   return {
     itemSource := Runner.ItemSource.file toolchainsFile
     projectDir := projectDir
@@ -430,7 +431,11 @@ private def buildContinueConfig (st : ContinueParseState) : IO Runner.Config := 
   let verifyOpts : Runner.VerifyOptions :=
     { runTest := spec.runTest, runLint := spec.runLint
       buildArgs := spec.buildArgs, testArgs := spec.testArgs, lintArgs := spec.lintArgs }
-  let strategy ← mkRunStrategy spec.kind persisted.strategyScope verifyOpts
+  -- Derive skip-build from the persisted verify steps (empty ⇒ build was skipped), not the
+  -- live HOPSCOTCH_SKIP_BUILD, so the resume reproduces the original run's pass/fail meaning
+  -- regardless of the current environment.
+  let skipBuild := persisted.verifySteps == some #[]
+  let strategy := mkRunStrategy spec.kind persisted.strategyScope verifyOpts skipBuild
   return {
     -- A range source with no refs makes `Runner.run` resume from the stored item list
     -- (state exists) rather than re-resolving it; the original source no longer matters.
