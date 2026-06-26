@@ -354,7 +354,7 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
             match knownBadFailureResult? bisect with
             | some failure =>
                 let resolved ← attachProposedFixes config paths
-                  (buildBisectResolvedState state commits bisect failure) emit
+                  (buildBisectResolvedState state commits bisect failure) emit failure.buildLog
                 let (_, summary) ← saveState paths config.resultsJsonPath resolved
                 if let some lp := failure.logPath then copyCulpritLog paths lp
                 return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
@@ -371,7 +371,7 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
           match knownBadFailureResult? updatedBisect with
           | some failure =>
               let resolved ← attachProposedFixes config paths
-                (buildBisectResolvedState base commits updatedBisect failure) emit
+                (buildBisectResolvedState base commits updatedBisect failure) emit failure.buildLog
               let (_, summary) ← saveState paths config.resultsJsonPath resolved
               if let some lp := failure.logPath then copyCulpritLog paths lp
               return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
@@ -398,7 +398,7 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
             outcome := .success
           }
         }
-    | .failure stage logPath _ =>
+    | .failure stage logPath buildLog =>
         advanceOrResolve state { bisect with
           knownBadIndex := probeIndex
           verifiedBad := true
@@ -408,6 +408,9 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
             outcome := .failure
             stage := some stage
             logPath := some logPath
+            -- Preserve the build log so detection scans it (not the failing
+            -- step's log) when this cached failure is later resolved.
+            buildLog := buildLog
           }
         }
   loop state

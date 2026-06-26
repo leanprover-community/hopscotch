@@ -60,6 +60,12 @@ structure ProbeResult where
   outcome : ProbeOutcome
   stage : Option RunStage := none
   logPath : Option System.FilePath := none
+  /-- The `lake build` step's log, when the build step ran. Recorded separately
+      from `logPath` (the failing step's log) so that when a bisect resolves from
+      this cached failure, automated-fix detection can scan the build log — where
+      deprecation warnings are emitted — even if a later step (`lake test` /
+      `lake lint`) is what failed. -/
+  buildLog : Option System.FilePath := none
   deriving Repr, Inhabited, BEq, ToJson, FromJson
 
 /--
@@ -86,7 +92,7 @@ structure BisectState where
 
 /-- On-disk state schema version; increment whenever `PersistedState` or its nested
     types change in a backward-incompatible way. A mismatch on resume is fatal. -/
-def currentSchemaVersion : Nat := 9
+def currentSchemaVersion : Nat := 10
 
 /--
 Minimal restartable state persisted under `.lake/hopscotch/state.json`.

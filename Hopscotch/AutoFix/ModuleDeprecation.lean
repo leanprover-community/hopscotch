@@ -1,3 +1,4 @@
+import Std.Data.HashSet
 import Hopscotch.AutoFix.Framework
 import Hopscotch.AutoFix.Migration
 import Hopscotch.State
@@ -277,24 +278,35 @@ private def relPathString (projectDir file : System.FilePath) : String :=
   else file.fileName.getD p
 
 /--
-Apply one migration to every downstream source file: rewrite `import oldModule`
-to the migration's `newModules`. Backs up each file (once) before its first
-rewrite. Returns the project-relative paths of the files that changed.
+Apply the given migrations to every downstream source file: rewrite each
+`import oldModule` to its `newModules`. Walks the workspace and reads each file
+once, applying all migrations in a single pass (rather than re-walking and
+re-reading per migration). Backs up each file (once) before its first rewrite,
+and writes the result atomically. Returns the project-relative paths of the
+files that changed.
 -/
-def applyMigrationToWorkspace (paths : Paths) (projectDir : System.FilePath)
-    (m : ImportMigration) : IO (Array String) := do
+def applyMigrationsToWorkspace (paths : Paths) (projectDir : System.FilePath)
+    (ms : Array ImportMigration) : IO (Array String) := do
   let files ← collectLeanFiles projectDir
   let mut changedFiles : Array String := #[]
   for file in files do
-    let contents ← IO.FS.readFile file
-    match rewriteImports contents m.oldModule m.newModules with
-    | some rewritten =>
-        let rel := relPathString projectDir file
-        backupFileOnce paths rel contents
-        IO.FS.writeFile file rewritten
-        changedFiles := changedFiles.push rel
-    | none => pure ()
+    let original ← IO.FS.readFile file
+    let mut contents := original
+    for m in ms do
+      if let some rewritten := rewriteImports contents m.oldModule m.newModules then
+        contents := rewritten
+    unless contents == original do
+      let rel := relPathString projectDir file
+      backupFileOnce paths rel original
+      writeFileAtomic file contents
+      changedFiles := changedFiles.push rel
   return changedFiles
+
+/-- Apply a single migration to the workspace. Thin wrapper over
+    `applyMigrationsToWorkspace` for callers (and tests) that have just one. -/
+def applyMigrationToWorkspace (paths : Paths) (projectDir : System.FilePath)
+    (m : ImportMigration) : IO (Array String) :=
+  applyMigrationsToWorkspace paths projectDir #[m]
 
 /-- Resolve `(owner, repo)` for the dependency from the downstream lakefile, if it
     is a recognized GitHub git dependency. -/
@@ -489,6 +501,11 @@ private def detect (ctx : FixContext) : IO DetectResult := do
        else gitLeanFilesAt? depDir ctx.currentCommit)
     | return {}
   let shimsNew ← gitShimPathsAt depDir newestRef
+  -- The dependency tree and shim set are large (mathlib: ~10k paths), and every
+  -- downstream import is tested against them — back the membership checks with
+  -- hash sets so each lookup is O(1) rather than a linear array scan.
+  let treeCurSet : Std.HashSet String := treeCur.foldl (·.insert ·) ∅
+  let shimsNewSet : Std.HashSet String := shimsNew.foldl (·.insert ·) ∅
   -- Top-level module roots of the dependency (e.g. `Mathlib`), to skip imports
   -- that cannot belong to it (Lean, Std, the downstream's own modules) without
   -- paying a git query each. Drawn from the baseline tree as well as the
@@ -525,7 +542,7 @@ private def detect (ctx : FixContext) : IO DetectResult := do
     let root := (m.splitOn ".").headD m
     unless roots.contains root do continue
     let p := moduleToRelPath m
-    if !treeCur.contains p then
+    if !treeCurSet.contains p then
       -- Broken at the boundary commit.
       match ← resolveMissing depDir repo? ctx.baseline newestRef m p with
       | some (newModules, hasDecls) =>
@@ -534,7 +551,7 @@ private def detect (ctx : FixContext) : IO DetectResult := do
           notes := notes.push
             s!"{m} is missing in the dependency at the boundary commit and no \
                replacement/deprecation shim was found; leaving it as a genuine failure"
-    else if shimsNew.contains p then
+    else if shimsNewSet.contains p then
       -- Resolves today, but through a deprecation shim at the newest range commit.
       if let some blob ← gitShow? depDir newestRef p then
         if isDeprecatedModuleShim blob then
@@ -569,7 +586,7 @@ def moduleDeprecationFix : Fix := {
      deprecated (deprecated_module shims): propose the shim's replacement \
      imports, and flag still-working imports that resolve through a shim."
   detect := ModuleDeprecation.detect
-  applyOne := ModuleDeprecation.applyMigrationToWorkspace
+  apply := ModuleDeprecation.applyMigrationsToWorkspace
 }
 
 end Hopscotch.AutoFix

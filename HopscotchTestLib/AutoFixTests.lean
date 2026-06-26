@@ -199,7 +199,7 @@ private def stubFix : Fix := {
     advisories := #[{ fixId := "mislabeled", oldModule := "Demo.Dep"
                       newModules := #["Demo.Dep2"] }]
     notes := #["inspected the failure"] }
-  applyOne := fun _ _ _ => pure #[]
+  apply := fun _ _ _ => pure #[]
 }
 
 private def «failure boundary records proposals without retrying or rewriting» : IO Unit := do
@@ -251,7 +251,7 @@ private def logProbeFix : Fix := {
     advisories := #[{ fixId := ""
                       oldModule := if ctx.buildLogPath.isSome then "log-present" else "log-absent"
                       newModules := #[] }] }
-  applyOne := fun _ _ _ => pure #[]
+  apply := fun _ _ _ => pure #[]
 }
 
 private def «green conclusion hands the last successful build log to detection» : IO Unit := do
@@ -287,7 +287,7 @@ private def logNameFix : Fix := {
     advisories := #[{ fixId := ""
                       oldModule := (ctx.buildLogPath.bind (·.fileName)).getD "none"
                       newModules := #[] }] }
-  applyOne := fun _ _ _ => pure #[]
+  apply := fun _ _ _ => pure #[]
 }
 
 /-- With `--test`/`--lint` enabled the verify steps are `[build, test, lint]`, so
@@ -316,6 +316,36 @@ private def «detection reads the build log, not the lint log, with --lint enabl
       | fail "detection recorded the log file it received"
     assertTrue (adv.oldModule.endsWith "build.log")
       s!"detection received the build log, not the lint/test log (got {adv.oldModule})"
+
+/-- Bisect counterpart of the previous test. A bisect resolves from a *cached*
+    failing probe (`ProbeResult`), so the build log must be carried on that record
+    — not just on the live `ProbeRunResult` — for detection to scan it. Here the
+    boundary commit's build succeeds but its lint step fails; detection must still
+    receive the build log, where `linter.deprecated.module` warnings fire. -/
+private def «bisect resolution hands detection the build log, not the lint log» : IO Unit := do
+  withTempDir "hopscotch-buildlog-bisect" fun dir => do
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    -- Two commits: the good endpoint is assumed; the bad endpoint fails at lint.
+    IO.FS.writeFile commitListPath "c1\nbadlint2\n"
+    configureMockLake projectDir "fail-lint"
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      runMode := .bisect
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+                    { runTest := true, runLint := true }
+      autoFixes := #[logNameFix]
+      quiet := true
+    } ignoreOutput
+    assertEq 1 result.exitCode "the bisect stops at the lint-failing boundary"
+    let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
+    assertEq (.stopped) state.status "the boundary is recorded"
+    let some adv := state.deprecatedImports[0]?
+      | fail "detection recorded the log file it received"
+    assertTrue (adv.oldModule.endsWith "build.log")
+      s!"bisect detection received the build log, not the lint log (got {adv.oldModule})"
 
 /-! ## Detection against a real dependency git history (git-gated) -/
 
@@ -897,6 +927,7 @@ def suite : TestSuite := #[
   test_case «failure boundary records proposals without retrying or rewriting»,
   test_case «green conclusion hands the last successful build log to detection»,
   test_case «detection reads the build log, not the lint log, with --lint enabled»,
+  test_case «bisect resolution hands detection the build log, not the lint log»,
   test_case «hopscotch fix list/apply/revert round-trips a proposed migration»,
   test_case «fix apply migrates advisories by default; --no-advisories restricts to proposals»,
   test_case «hopscotch fix apply skips unknown fix types»,

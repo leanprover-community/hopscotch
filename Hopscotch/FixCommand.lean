@@ -105,15 +105,22 @@ def run (config : Config) (output : String → IO Unit := IO.println) : IO UInt3
       -- Dispatch each migration to its owning fix via the registry; a results.json
       -- written by a newer hopscotch could carry fix types this build does not
       -- know, which are skipped loudly rather than misread.
+      -- Group migrations by their owning fix and apply each fix once, so the
+      -- workspace is walked a single time per fix rather than once per migration.
+      let mut fixIds : Array String := #[]
+      for m in toApply do
+        unless fixIds.contains m.fixId do fixIds := fixIds.push m.fixId
       let mut applied := 0
       let mut changed : Array String := #[]
-      for m in toApply do
-        match standardAutoFixes.find? (·.id == m.fixId) with
+      for fixId in fixIds do
+        let group := toApply.filter (·.fixId == fixId)
+        match standardAutoFixes.find? (·.id == fixId) with
         | some fix =>
-            changed := changed ++ (← fix.applyOne paths config.projectDir m)
-            applied := applied + 1
+            changed := changed ++ (← fix.apply paths config.projectDir group)
+            applied := applied + group.size
         | none =>
-            output s!"skipping [{m.fixId}] {m.oldModule}: unknown fix type for this hopscotch version"
+            for m in group do
+              output s!"skipping [{m.fixId}] {m.oldModule}: unknown fix type for this hopscotch version"
       output s!"Applied {applied} migration(s); rewrote {changed.size} file(s) in {config.projectDir}."
       return 0
   | .revert =>

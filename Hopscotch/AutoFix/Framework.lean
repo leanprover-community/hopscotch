@@ -29,9 +29,9 @@ A fix contributes two functions:
 
 - `detect`   — inspect the concluded run (and the dependency history) and propose
   migrations/advisories. Detection only: it does not touch the workspace.
-- `applyOne` — apply a single recorded migration to the workspace, idempotently,
-  returning the project-relative files it changed. Used by `hopscotch fix apply`,
-  never by a run.
+- `apply`    — apply the recorded migrations to the workspace in one pass,
+  idempotently, returning the project-relative files it changed. Used by
+  `hopscotch fix apply`, never by a run.
 
 The framework (`detectFixes`) stamps the owning fix's id on every record.
 -/
@@ -84,10 +84,11 @@ structure Fix where
   /-- Inspect the concluded failure boundary and propose migrations. Detection
       only — nothing is applied. Default: detects nothing. -/
   detect : FixContext → IO DetectResult := fun _ => pure {}
-  /-- Apply one recorded migration to the workspace (idempotent). Returns the
-      project-relative files it changed. Used by `hopscotch fix apply`, never by
-      a run. -/
-  applyOne : Paths → System.FilePath → ImportMigration → IO (Array String)
+  /-- Apply the recorded migrations to the workspace in one pass (idempotent),
+      walking the workspace a single time rather than once per migration. Returns
+      the project-relative files it changed. Used by `hopscotch fix apply`, never
+      by a run. -/
+  apply : Paths → System.FilePath → Array ImportMigration → IO (Array String)
   /-- One-line human rendering of one of this fix's migrations. -/
   render : ImportMigration → String := ImportMigration.describe
 
@@ -137,8 +138,9 @@ def backupPath (paths : Paths) (relPath : String) : System.FilePath :=
 def backupFileOnce (paths : Paths) (relPath : String) (contents : String) : IO Unit := do
   let backup := backupPath paths relPath
   unless ← backup.pathExists do
-    ensureParentDir backup
-    IO.FS.writeFile backup contents
+    -- Atomic: a torn backup write would leave a truncated original as the only
+    -- recoverable copy, and `fix revert` would restore that corruption.
+    writeFileAtomic backup contents
 
 /-- Project-relative paths of every file in the backup store. -/
 private partial def collectBackupFiles (dir : System.FilePath) (relPrefix : String)
@@ -160,8 +162,7 @@ def restoreAllBackups (paths : Paths) (projectDir : System.FilePath)
   let mut restored : Array String := #[]
   for rel in ← collectBackupFiles (backupRoot paths) "" do
     let target := projectDir / rel
-    ensureParentDir target
-    IO.FS.writeFile target (← IO.FS.readFile (backupPath paths rel))
+    writeFileAtomic target (← IO.FS.readFile (backupPath paths rel))
     restored := restored.push rel
   return restored
 
