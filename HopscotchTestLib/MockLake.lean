@@ -125,6 +125,40 @@ def runMockLake (args : List String) : IO UInt32 := do
     pure 1
   else if mode == "fail-build-toolchain" && stage == "build" && toolchain.startsWith "badbuild" then
     pure 1
+  else if mode == "lean-imports" then
+    -- A faithful end-to-end simulation of building against a real dependency
+    -- checkout: `update` checks the dependency repo out at the probed rev, and
+    -- `build` fails iff some downstream `import Demo.*` has no corresponding file
+    -- in the dependency checkout at that rev (i.e. an unknown-module error).
+    let pkgsDir := projectDir / ".lake" / "packages"
+    let depDir? ← do
+      if ← pkgsDir.pathExists then
+        let mut found : Option System.FilePath := none
+        for e in ← pkgsDir.readDir do
+          if found.isNone && (← e.path.isDir) then found := some e.path
+        pure found
+      else
+        pure (none : Option System.FilePath)
+    match depDir? with
+    | none => pure 0
+    | some depDir =>
+      if stage == "update" then
+        let _ ← IO.Process.output {
+          cmd := "git"
+          args := #["-C", depDir.toString, "checkout", "--quiet", rev]
+          env := Hopscotch.secretScrubEnv
+        }
+        pure 0
+      else
+        let files ← Hopscotch.AutoFix.ModuleDeprecation.collectLeanFiles projectDir
+        let mut ok := true
+        for f in files do
+          let contents ← IO.FS.readFile f
+          for m in Hopscotch.AutoFix.ModuleDeprecation.parseShimImports contents do
+            if m.startsWith "Demo." then
+              let modFile := depDir / (Hopscotch.AutoFix.ModuleDeprecation.moduleToRelPath m)
+              unless ← modFile.pathExists do ok := false
+        pure (if ok then (0 : UInt32) else 1)
   else
     pure 0
 

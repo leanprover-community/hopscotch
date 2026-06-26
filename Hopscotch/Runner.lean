@@ -6,12 +6,14 @@ import Hopscotch.ItemList
 import Hopscotch.GitHub
 import Hopscotch.Results
 import Hopscotch.State
+import Hopscotch.AutoFix.Framework
 import Hopscotch.Util
 
 namespace Hopscotch.Runner
 
 open Hopscotch
 open Hopscotch.State
+open Hopscotch.AutoFix
 
 /-- Copy the culprit log file into the designated culprit subfolder for easy discovery.
     Skips silently if the source file does not exist (e.g. interrupted before the step ran). -/
@@ -59,11 +61,65 @@ private def restoreTo (config : Config) (paths : Paths) (commit : String)
   unless ok do
     emit .running s!"[{← nowUtcString}] Warning: could not restore to {commit} (see {logPath})"
 
-/-- Result of one full bump + verify probe. -/
+/-- Result of one full bump + verify probe. Both outcomes carry the `lake build`
+    step's log (when the build step ran), so detection can scan it for the
+    toolchain's deprecation warnings regardless of which later step (`lake test` /
+    `lake lint`) ultimately failed or was last on a green probe — deprecation
+    warnings are emitted at build time. On a failure, `logPath` is still the
+    failing step's log (used for the culprit copy and `lastLogPath`). -/
 private inductive ProbeRunResult where
-  | success
-  | failure (stage : RunStage) (logPath : System.FilePath)
+  | success (buildLog : Option System.FilePath)
+  | failure (stage : RunStage) (logPath : System.FilePath) (buildLog : Option System.FilePath)
   deriving Repr
+
+/--
+After a run concludes, run the registered fixes' detection once and record the
+results on the state: migrations proposed for the failure boundary (only when
+the run stopped) and advisories for imports that resolve through live
+deprecation shims (on any conclusion — a fully-successful run still surfaces
+what will break at the next upstream shim cleanup). Both are surfaced via
+`summary.md` and `results.json`; nothing is applied — applying is the consumer's
+choice (`hopscotch fix apply`, followed by a re-run to search past the repaired
+breakage).
+-/
+private def attachProposedFixes (config : Config) (paths : Paths)
+    (state : PersistedState) (emit : ConsoleStyle → String → IO Unit)
+    (buildLog : Option System.FilePath := none) : IO PersistedState := do
+  if config.autoFixes.isEmpty then return state
+  -- Inspect the boundary commit when stopped; the newest range commit otherwise.
+  let some commit := state.currentCommit <|> state.items.back? | return state
+  let ctx : FixContext := {
+    projectDir := paths.projectDir
+    paths := paths
+    dependencyName := config.strategy.scope
+    items := state.items
+    currentCommit := commit
+    -- Known-good diff baseline for the fixes: the range's `from` rev when the run
+    -- came from a commit range. File-sourced lists carry no lower bound, so use
+    -- the first item — lists are oldest→newest by convention, making it the
+    -- closest known-good proxy. (`getD commit` is unreachable: a run has items.)
+    baseline := state.lowerBoundRef.getD (state.items[0]?.getD commit)
+    -- Prefer the build log (where deprecation warnings live); fall back to
+    -- `lastLogPath` for paths that don't carry one (e.g. a resumed bisect
+    -- resolving from a stored failing probe — there `lastLogPath` is the
+    -- boundary's failing-step log).
+    buildLogPath := buildLog <|> state.lastLogPath
+    quiet := config.quiet }
+  let detected ← AutoFix.detectFixes config.autoFixes ctx
+    (fun msg => do emit .running s!"[{← nowUtcString}] {msg}")
+  if state.status == .stopped then
+    return { state with
+      proposedFixes := detected.migrations
+      deprecatedImports := detected.advisories
+      autoFixNotes := detected.notes }
+  else
+    -- On a green conclusion nothing needs fixing; anything detection still
+    -- proposed (e.g. a warned deprecation that did not fail this build) is worth
+    -- migrating all the same, so fold it into the advisories.
+    return { state with
+      proposedFixes := #[]
+      deprecatedImports := detected.advisories ++ detected.migrations
+      autoFixNotes := detected.notes }
 
 /--
 Run one full bump + verify probe while keeping restartable state current.
@@ -130,23 +186,28 @@ private def runProbe (config : Config) (paths : Paths) (base : PersistedState)
     emit (if bumpOk then .success else .failure)
       s!"[{← nowUtcString}] Finished {bumpStep.label} (log file: {bumpLogPath})"
     if !bumpOk then
-      return .failure bumpStep.stage bumpLogPath
+      -- The build step hasn't run yet, so there is no build log to hand to detection.
+      return .failure bumpStep.stage bumpLogPath none
   -- Verify phase: run each step in order, resuming from the saved point if applicable.
   let startAt :=
     match resumeStage? with
     | none => 0
     | some stage =>
         config.strategy.verify.findIdx? (·.stage == stage) |>.getD 0
+  -- Track the build step's log specifically (it carries deprecation warnings),
+  -- separately from whichever step ultimately fails.
+  let mut buildLog : Option System.FilePath := none
   for step in config.strategy.verify.extract startAt config.strategy.verify.size do
     let _ ← saveState paths config.resultsJsonPath <| buildRunningState base index commit (some step.stage)
     let verifyLogPath := State.logPath paths namePrefix commit step.stage
+    if step.stage == .build then buildLog := some verifyLogPath
     emit .running s!"[{← nowUtcString}] Running {step.label}"
     let stepOk ← step.run paths.projectDir verifyLogPath config.quiet
     emit (if stepOk then .success else .failure)
       s!"[{← nowUtcString}] Finished {step.label} (log file: {verifyLogPath})"
     if !stepOk then
-      return .failure step.stage verifyLogPath
-  return .success
+      return .failure step.stage verifyLogPath buildLog
+  return .success buildLog
 
 /-- Run each verify step's preflight once before the search begins, so a misconfiguration
     (e.g. a missing `lake test` / `lake lint` driver) aborts immediately with a clear error
@@ -167,10 +228,14 @@ On resume after a previously-failed commit, a git cleanliness check is performed
 before advancing past that commit (unless `--allow-dirty-workspace` was passed).
 -/
 private def runAdvance (config : Config) (paths : Paths) (commits : Array String)
-    (emit : ConsoleStyle → String → IO Unit) : IO RunResult := do
-  let mut state ← loadInitialState paths config commits
+    (lowerBoundRef : Option String) (emit : ConsoleStyle → String → IO Unit) : IO RunResult := do
+  let mut state ← loadInitialState paths config commits lowerBoundRef
   let resumedFailedCommit := state.status == .stopped
   let resumeIndex := state.nextIndex
+  -- A resumed session retries the previously-failed commit; drop the detection
+  -- results attached to that conclusion (recomputed when the run concludes again).
+  if resumedFailedCommit then
+    state := { state with proposedFixes := #[], deprecatedImports := #[], autoFixNotes := #[] }
   validateState state commits
   if state.status == .fullySuccessful then
     let summary ← writeSummary paths state
@@ -182,14 +247,22 @@ private def runAdvance (config : Config) (paths : Paths) (commits : Array String
   -- `lastSummary` captures the most recent summary written by `saveState`.
   -- It is always set before the loop exits with (status → fullySuccessful).
   let mut lastSummary : String := ""
+  -- `lake build` log of the most recent successful probe, handed to detection on
+  -- a green conclusion (it carries the toolchain's deprecation warnings, which
+  -- fire at build time — not in a later `lake test` / `lake lint` log).
+  let mut lastGreenLog : Option System.FilePath := none
   for index in [state.nextIndex:commits.size] do
     let commit := commits[index]!
-    match ← runProbe config paths state index index commit emit with
-    | .failure stage logPath =>
-        let (_, summary) ← saveState paths config.resultsJsonPath <| buildFailureState state index commit stage logPath
+    let probeResult ← runProbe config paths state index index commit emit
+    match probeResult with
+    | .failure stage logPath buildLog =>
+        let stopped ← attachProposedFixes config paths
+          (buildFailureState state index commit stage logPath) emit buildLog
+        let (_, summary) ← saveState paths config.resultsJsonPath stopped
         copyCulpritLog paths logPath
         return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
-    | .success =>
+    | .success buildLog =>
+        lastGreenLog := buildLog <|> lastGreenLog
         if resumedFailedCommit && index == resumeIndex && !config.allowDirtyWorkspace then
           match ← checkGitWorktree paths.projectDir with
           | .clean =>
@@ -201,7 +274,13 @@ private def runAdvance (config : Config) (paths : Paths) (commits : Array String
               let buildLogPath := State.logPath paths (config.strategy.logPrefix index index) commit .build
               emit .failure
                 s!"[{← nowUtcString}] Resume blocked: commit the fix for {commit} or rerun with --allow-dirty-workspace"
-              let (_, summary) ← saveState paths config.resultsJsonPath <| buildFailureState state index commit .gitCheck buildLogPath
+              -- Run detection here too (mirroring the build-failure path above), so a
+              -- dirty-block stop preserves advisories/notes in results.json rather than
+              -- overwriting them with the cleared resume state. The commit built, so the
+              -- boundary-proposal branch finds nothing — only live-shim advisories surface.
+              let stopped ← attachProposedFixes config paths
+                (buildFailureState state index commit .gitCheck buildLogPath) emit buildLog
+              let (_, summary) ← saveState paths config.resultsJsonPath stopped
               copyCulpritLog paths buildLogPath
               return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
         if resumedFailedCommit && index == resumeIndex then
@@ -209,6 +288,12 @@ private def runAdvance (config : Config) (paths : Paths) (commits : Array String
         let saved ← saveState paths config.resultsJsonPath <| advanceAfterSuccess state commits index commit
         state := saved.1
         lastSummary := saved.2
+  -- Run detection on the completed state too: imports that resolve through live
+  -- deprecation shims build today but break at the upstream shim cleanup.
+  let concluded ← attachProposedFixes config paths state emit lastGreenLog
+  unless concluded.deprecatedImports.isEmpty do
+    let (_, summary) ← saveState paths config.resultsJsonPath concluded
+    return { exitCode := 0, summary := summary, summaryPath := paths.summaryPath }
   return { exitCode := 0, summary := lastSummary, summaryPath := paths.summaryPath }
 
 /--
@@ -234,8 +319,8 @@ loop from the type alone; termination is guaranteed by the invariant that each
 iteration strictly narrows the search window.
 -/
 private partial def runBisect (config : Config) (paths : Paths) (commits : Array String)
-    (emit : ConsoleStyle → String → IO Unit) : IO RunResult := do
-  let state ← loadInitialState paths config commits
+    (lowerBoundRef : Option String) (emit : ConsoleStyle → String → IO Unit) : IO RunResult := do
+  let state ← loadInitialState paths config commits lowerBoundRef
   validateState state commits
   if state.status == .fullySuccessful then
     let summary ← writeSummary paths state
@@ -274,37 +359,44 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
         | none =>
             match knownBadFailureResult? bisect with
             | some failure =>
-                let (_, summary) ← saveState paths config.resultsJsonPath <| buildBisectResolvedState state commits bisect failure
+                let resolved ← attachProposedFixes config paths
+                  (buildBisectResolvedState state commits bisect failure) emit failure.buildLog
+                let (_, summary) ← saveState paths config.resultsJsonPath resolved
                 if let some lp := failure.logPath then copyCulpritLog paths lp
                 return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
             | none =>
                 throw <| IO.userError "stored bisect state is missing the failing probe result"
     let commit := commits[probeIndex]!
     -- After updating bisect bounds: loop with the next midpoint, or resolve if bounds are adjacent.
-    let advanceOrResolve (updatedBisect : BisectState) : IO RunResult := do
+    let advanceOrResolve (base : PersistedState) (updatedBisect : BisectState) : IO RunResult := do
       match nextBisectProbeIndex? (bisectBounds updatedBisect) with
       | some nextIndex =>
-          let saved ← saveState paths config.resultsJsonPath <| buildBisectSearchState state commits updatedBisect nextIndex
+          let saved ← saveState paths config.resultsJsonPath <| buildBisectSearchState base commits updatedBisect nextIndex
           loop saved.1
       | none =>
           match knownBadFailureResult? updatedBisect with
           | some failure =>
-              let (_, summary) ← saveState paths config.resultsJsonPath <| buildBisectResolvedState state commits updatedBisect failure
+              let resolved ← attachProposedFixes config paths
+                (buildBisectResolvedState base commits updatedBisect failure) emit failure.buildLog
+              let (_, summary) ← saveState paths config.resultsJsonPath resolved
               if let some lp := failure.logPath then copyCulpritLog paths lp
               return { exitCode := 1, summary := summary, summaryPath := paths.summaryPath }
           | none =>
               throw <| IO.userError "bisect resolution is missing the failing probe result"
     let stepNum := bisect.probeResults.size
-    match ← runProbe config paths state stepNum probeIndex commit emit with
-    | .success =>
+    let probeResult ← runProbe config paths state stepNum probeIndex commit emit
+    match probeResult with
+    | .success buildLog =>
         if !bisect.verifiedBad then
           if config.keepLastGood then
-            let (_, summary) ← saveState paths config.resultsJsonPath <| buildBisectAllPassState state bisect commit
+            let allPass ← attachProposedFixes config paths
+              (buildBisectAllPassState state bisect commit) emit buildLog
+            let (_, summary) ← saveState paths config.resultsJsonPath allPass
             return { exitCode := 0, summary, summaryPath := paths.summaryPath }
           else
             throw <| IO.userError
               s!"bisect mode requires a known failing endpoint, but the last commit succeeded during re-verification: {commit}\nHint: pass --keep-last-good to treat an all-passing range as a completed run with no culprit."
-        advanceOrResolve { bisect with
+        advanceOrResolve state { bisect with
           knownGoodIndex := probeIndex
           probeResults := recordProbeResult bisect.probeResults {
             index := probeIndex
@@ -312,8 +404,8 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
             outcome := .success
           }
         }
-    | .failure stage logPath =>
-        advanceOrResolve { bisect with
+    | .failure stage logPath buildLog =>
+        advanceOrResolve state { bisect with
           knownBadIndex := probeIndex
           verifiedBad := true
           probeResults := recordProbeResult bisect.probeResults {
@@ -322,6 +414,9 @@ private partial def runBisect (config : Config) (paths : Paths) (commits : Array
             outcome := .failure
             stage := some stage
             logPath := some logPath
+            -- Preserve the build log so detection scans it (not the failing
+            -- step's log) when this cached failure is later resolved.
+            buildLog := buildLog
           }
         }
   loop state
@@ -337,9 +432,9 @@ GitHub API.
 warning and the "no --to given, using default branch tip" notice.
 -/
 private def resolveItems (config : Config) (paths : Paths)
-    (warn : String → IO Unit) : IO (Array String) := do
+    (warn : String → IO Unit) : IO (Array String × Option String) := do
   match config.itemSource with
-  | .file path => ItemList.load path
+  | .file path => return (← ItemList.load path, none)
   | .range toRef fromRef gitUrl =>
       let resolvedUrl ←
         match gitUrl with
@@ -387,7 +482,9 @@ private def resolveItems (config : Config) (paths : Paths)
       if commits.isEmpty then
         throw <| IO.userError
           s!"no commits found between {resolvedFrom} and {resolvedTo} in {owner}/{repo}"
-      return commits
+      -- `resolvedFrom` is the known-good lower bound (excluded from `commits`); it is
+      -- the natural baseline for diffing the dependency in automated fixes.
+      return (commits, some resolvedFrom)
 
 /--
 Run or resume the requested execution mode until it either completes successfully
@@ -410,20 +507,20 @@ def run (config : Config) (output : String → IO Unit := IO.println)
   -- a spurious "commit list changed; delete state" error.
   -- File-mode sources are always re-read so that changes to the commits file
   -- are detected and rejected on resume, consistent with prior behavior.
-  let commits ←
+  let (commits, lowerBoundRef) ←
     match config.itemSource with
     | .file _ => resolveItems config paths (emit .running)
     | .range .. =>
         match ← State.load? paths with
-        | some existingState => pure existingState.items
+        | some existingState => pure (existingState.items, existingState.lowerBoundRef)
         | none => resolveItems config paths (emit .running)
 
   ensureLakefile paths
   ensureDirs paths
 
   let result ← match config.runMode with
-    | .linear => runAdvance config paths commits emit
-    | .bisect => runBisect config paths commits emit
+    | .linear => runAdvance config paths commits lowerBoundRef emit
+    | .bisect => runBisect config paths commits lowerBoundRef emit
   -- Post-search lakefile/toolchain restoration.
   -- Restore the lakefile/toolchain to a well-defined endpoint once the search
   -- is done so that the caller can immediately reproduce the result with

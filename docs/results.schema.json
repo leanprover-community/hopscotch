@@ -22,14 +22,17 @@
     "logsDir",
     "summaryPath",
     "bisect",
+    "proposedFixes",
+    "deprecatedImports",
+    "detectionNotes",
     "updatedAt"
   ],
   "additionalProperties": false,
   "properties": {
     "schemaVersion": {
       "type": "integer",
-      "const": 2,
-      "description": "Schema version for this file. Bumped on any backward-incompatible change; independent of the runner's internal state.json schema. v2 added the `lake test` / `lake lint` stage values (from the optional `--test` / `--lint` verify steps)."
+      "const": 3,
+      "description": "Schema version for this file. Bumped on any backward-incompatible change; independent of the runner's internal state.json schema. v2 added the `lake test` / `lake lint` stage values (from the optional `--test` / `--lint` verify steps); v3 added `proposedFixes`, `deprecatedImports`, and `detectionNotes`."
     },
     "status": {
       "type": "string",
@@ -103,6 +106,21 @@
         { "$ref": "#/$defs/Bisect" }
       ],
       "description": "Bisect-specific state. Present iff `mode = bisect`."
+    },
+    "proposedFixes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ProposedFix" },
+      "description": "Automated fixes proposed for the failure boundary (empty when none, or when the run did not stop). The run never modifies the downstream workspace: each entry is a declarative repair the consumer can opt into with `hopscotch fix apply` (or by editing imports manually), after which a re-run searches past the repaired breakage. An entry with empty `newModules` means the import should be removed."
+    },
+    "deprecatedImports": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ProposedFix" },
+      "description": "Advisories recorded at the run's conclusion (including fully-successful runs): downstream imports that resolve through a live `deprecated_module` shim in the dependency. They build today but break when the shim is deleted upstream. Applied by `hopscotch fix apply` (skipping entries with `partialFix`); pass `--no-advisories` to apply only the boundary proposals."
+    },
+    "detectionNotes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Human-readable notes from automated-fix detection, each prefixed with the owning fix's id — e.g. a module that was deleted upstream with no replacement shim, so no fix could be proposed. Lets a report explain a culprit even when `proposedFixes` is empty."
     },
     "updatedAt": {
       "type": "string",
@@ -185,11 +203,39 @@
           "description": "Absolute path to the log from this probe. Populated on failure; may be `null` on success."
         }
       }
+    },
+    "ProposedFix": {
+      "type": "object",
+      "required": ["fixId", "oldModule", "newModules", "partialFix", "note"],
+      "additionalProperties": false,
+      "properties": {
+        "fixId": {
+          "type": "string",
+          "description": "Identifier of the automated fix that produced this proposal (e.g. `module-deprecation`). `hopscotch fix apply` dispatches on this id and skips unknown values loudly."
+        },
+        "oldModule": {
+          "type": "string",
+          "description": "The deleted/deprecated dependency module whose downstream imports should be rewritten (dotted form, e.g. `Mathlib.Topology.Algebra.Module.LinearMap`)."
+        },
+        "newModules": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "The replacement module(s) the deprecation shim re-exports, in import order. Empty means the shim re-exports nothing: the import should be removed."
+        },
+        "partialFix": {
+          "type": "boolean",
+          "description": "True when applying the migration may be incomplete: the rewrite repairs the import, but referencing code might still need manual changes (e.g. the source also defined `@[deprecated]` compatibility aliases the rewrite drops). `fix apply` skips such advisories; see `note` for the reason."
+        },
+        "note": {
+          "type": "string",
+          "description": "Human reason a migration is partial, supplied by the producing fix; empty string when the migration is not partial."
+        }
+      }
     }
   },
   "examples": [
     {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "status": "stopped",
       "mode": "bisect",
       "exitCode": 1,
@@ -236,6 +282,28 @@
           }
         ]
       },
+      "proposedFixes": [
+        {
+          "fixId": "module-deprecation",
+          "oldModule": "Mathlib.Topology.Algebra.Module.LinearMap",
+          "newModules": [
+            "Mathlib.Topology.Algebra.Module.ContinuousLinearMap.Basic",
+            "Mathlib.Topology.Algebra.Module.ContinuousLinearMap.Idempotent"
+          ],
+          "partialFix": false,
+          "note": ""
+        }
+      ],
+      "deprecatedImports": [
+        {
+          "fixId": "module-deprecation",
+          "oldModule": "Mathlib.Data.Real.Sqrt",
+          "newModules": ["Mathlib.Analysis.SpecialFunctions.Sqrt"],
+          "partialFix": false,
+          "note": ""
+        }
+      ],
+      "detectionNotes": [],
       "updatedAt": "2026-04-24T14:05:22Z"
     }
   ]

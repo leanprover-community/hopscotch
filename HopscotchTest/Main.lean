@@ -1,3 +1,4 @@
+import HopscotchTestLib.AutoFixTests
 import HopscotchTestLib.BehaviorTests
 import HopscotchTestLib.GitIOTests
 import HopscotchTestLib.IOTests
@@ -37,6 +38,7 @@ private def gitAvailable : IO Bool := do
 /-- Select the test suites to run, skipping git-specific tests when git is unavailable. -/
 def testSuitesToRun : IO (Array (String × TestSuite)) := do
   let baseSuites : Array (String × TestSuite) := #[
+    ("AutoFixTests",             AutoFixTests.suite),
     ("BehaviorTests",            BehaviorTests.suite),
     ("ParseTests",               ParseTests.suite),
     ("IOTests",                  IOTests.suite),
@@ -50,7 +52,9 @@ def testSuitesToRun : IO (Array (String × TestSuite)) := do
     ("UtilTests",                UtilTests.suite)
   ]
   if ← gitAvailable then
-    pure (baseSuites.push ("GitIOTests", GitIOTests.suite))
+    pure (baseSuites
+      |>.push ("GitIOTests", GitIOTests.suite)
+      |>.push ("AutoFixGitTests", AutoFixTests.gitSuite))
   else
     IO.eprintln "warning: git not available; skipping GitIOTests"
     pure baseSuites

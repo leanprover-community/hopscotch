@@ -97,13 +97,20 @@ def readJsonFile {α : Type _} [Lean.FromJson α] (path : System.FilePath) : IO 
   let json ← IO.ofExcept <| Lean.Json.parse contents
   IO.ofExcept <| Lean.fromJson? json
 
-/-- Write pretty-printed JSON to disk atomically (write-to-temp then rename).
-    Creating parent directories as needed. -/
-def writeJsonFile {α : Type _} [Lean.ToJson α] (path : System.FilePath) (value : α) : IO Unit := do
+/-- Write `contents` to `path` atomically (write-to-temp then rename), creating
+    parent directories as needed. Use whenever a torn write would corrupt a file
+    a later step depends on (e.g. the autofix backup store, whose contents are the
+    only record of a rewritten original). -/
+def writeFileAtomic (path : System.FilePath) (contents : String) : IO Unit := do
   ensureParentDir path
   let tmp := System.FilePath.mk (path.toString ++ ".tmp")
-  IO.FS.writeFile tmp (Lean.Json.pretty (Lean.toJson value))
+  IO.FS.writeFile tmp contents
   IO.FS.rename tmp path
+
+/-- Write pretty-printed JSON to disk atomically (write-to-temp then rename).
+    Creating parent directories as needed. -/
+def writeJsonFile {α : Type _} [Lean.ToJson α] (path : System.FilePath) (value : α) : IO Unit :=
+  writeFileAtomic path (Lean.Json.pretty (Lean.toJson value))
 
 /-- Resolve a path to a normalized absolute path for stable persisted state. -/
 def realPathNormalized (path : System.FilePath) : IO System.FilePath := do

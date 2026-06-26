@@ -1,3 +1,4 @@
+import HopscotchTestLib.AutoFixTests
 import HopscotchTestLib.BehaviorTests
 import HopscotchTestLib.GitIOTests
 import HopscotchTestLib.IOTests

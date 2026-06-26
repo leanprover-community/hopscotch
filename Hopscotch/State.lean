@@ -1,6 +1,7 @@
 import Lean
 import Lean.Data.Json.FromToJson
 import Hopscotch.Util
+import Hopscotch.AutoFix.Migration
 
 namespace Hopscotch.State
 
@@ -59,6 +60,12 @@ structure ProbeResult where
   outcome : ProbeOutcome
   stage : Option RunStage := none
   logPath : Option System.FilePath := none
+  /-- The `lake build` step's log, when the build step ran. Recorded separately
+      from `logPath` (the failing step's log) so that when a bisect resolves from
+      this cached failure, automated-fix detection can scan the build log — where
+      deprecation warnings are emitted — even if a later step (`lake test` /
+      `lake lint`) is what failed. -/
+  buildLog : Option System.FilePath := none
   deriving Repr, Inhabited, BEq, ToJson, FromJson
 
 /--
@@ -85,7 +92,7 @@ structure BisectState where
 
 /-- On-disk state schema version; increment whenever `PersistedState` or its nested
     types change in a backward-incompatible way. A mismatch on resume is fatal. -/
-def currentSchemaVersion : Nat := 8
+def currentSchemaVersion : Nat := 10
 
 /--
 Minimal restartable state persisted under `.lake/hopscotch/state.json`.
@@ -116,6 +123,23 @@ structure PersistedState where
   status : RunStatus
   stage : Option RunStage
   lastLogPath : Option System.FilePath
+  /-- Lower-bound dependency ref for the range (the `from`/baseline rev, exclusive of
+      `items`). Used by automated fixes to diff the dependency against a known-good
+      baseline. `none` for non-range sources (commits-file, toolchain). -/
+  lowerBoundRef : Option String := none
+  /-- Automated fixes proposed for the failure boundary after the run stopped.
+      Never applied by the run itself — the consumer opts in via
+      `hopscotch fix apply`. Empty unless `status = stopped`. See `Hopscotch.AutoFix`. -/
+  proposedFixes : Array AutoFix.ImportMigration := #[]
+  /-- Advisories recorded when the run concluded: downstream imports that resolve
+      through a live `deprecated_module` shim in the dependency — they build
+      today but break when the shim is deleted upstream. Informational; not
+      applied by `hopscotch fix apply`. -/
+  deprecatedImports : Array AutoFix.ImportMigration := #[]
+  /-- Notes from automated-fix detection at the run's conclusion — e.g. a module
+      that was deleted with no replacement shim, so no fix could be proposed.
+      Rendered in `summary.md` and exported as `detectionNotes` in `results.json`. -/
+  autoFixNotes : Array String := #[]
   updatedAt : String
   deriving Repr, Inhabited, ToJson, FromJson
 

@@ -14,6 +14,8 @@ def main (args : List String) : IO UInt32 := do
         let result ← Runner.run config IO.println stdoutColor
         IO.println <| colorize stdoutColor .info result.summary
         return UInt32.ofNat result.exitCode
+    | .fix config =>
+        return ← FixCommand.run config IO.println
     | .clean projectDir =>
         let stateRoot := projectDir / ".lake" / "hopscotch"
         if ← stateRoot.pathExists then
