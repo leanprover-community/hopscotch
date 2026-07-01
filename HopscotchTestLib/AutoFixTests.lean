@@ -4,7 +4,7 @@ import HopscotchTestLib.MockLake
 open Hopscotch
 open Hopscotch.State
 open Hopscotch.AutoFix
-open Hopscotch.AutoFix.ModuleDeprecation
+open Hopscotch.AutoFix.Mathlib.ModuleDeprecation
 
 namespace HopscotchTestLib.AutoFixTests
 

@@ -8,7 +8,7 @@ import Hopscotch.Util
 An extensible framework for automated fixes that recognize repairable build
 failures in a bisected/scanned downstream project and propose mechanical
 repairs. The concrete fixes live in sibling modules (e.g.
-`Hopscotch.AutoFix.ModuleDeprecation`).
+`Hopscotch.AutoFix.Mathlib.ModuleDeprecation`).
 
 A run never modifies the downstream sources. After a bisect/scan concludes at a
 failure boundary, the registered fixes' detection runs once against that

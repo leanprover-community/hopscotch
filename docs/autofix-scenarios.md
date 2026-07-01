@@ -25,7 +25,7 @@ The detection scenarios mirror the `deprecated_module` lifecycle observed across
 
 ## Detection inputs
 
-Detection (`ModuleDeprecation.detect`) runs against the boundary commit (the failing commit when stopped; the newest range commit on a green conclusion) and uses the following, all offline unless noted:
+Detection (`Mathlib.ModuleDeprecation.detect`) runs against the boundary commit (the failing commit when stopped; the newest range commit on a green conclusion) and uses the following, all offline unless noted:
 
 - The downstream's import set (comment-aware scan of every `.lean` file, prefiltered by the dependency's top-level module roots; non-dependency imports have no cost).
 - The dependency tree at the boundary and at the newest range commit (one `git ls-tree` each), plus the shim paths at the newest commit (one `git grep`).
