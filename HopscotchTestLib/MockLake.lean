@@ -150,13 +150,13 @@ def runMockLake (args : List String) : IO UInt32 := do
         }
         pure 0
       else
-        let files ← Hopscotch.AutoFix.ModuleDeprecation.collectLeanFiles projectDir
+        let files ← Hopscotch.AutoFix.Mathlib.ModuleDeprecation.collectLeanFiles projectDir
         let mut ok := true
         for f in files do
           let contents ← IO.FS.readFile f
-          for m in Hopscotch.AutoFix.ModuleDeprecation.parseShimImports contents do
+          for m in Hopscotch.AutoFix.Mathlib.ModuleDeprecation.parseShimImports contents do
             if m.startsWith "Demo." then
-              let modFile := depDir / (Hopscotch.AutoFix.ModuleDeprecation.moduleToRelPath m)
+              let modFile := depDir / (Hopscotch.AutoFix.Mathlib.ModuleDeprecation.moduleToRelPath m)
               unless ← modFile.pathExists do ok := false
         pure (if ok then (0 : UInt32) else 1)
   else

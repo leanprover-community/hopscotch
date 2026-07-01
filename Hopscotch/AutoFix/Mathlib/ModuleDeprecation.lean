@@ -33,7 +33,7 @@ namespace Hopscotch.AutoFix
 open Hopscotch
 open Hopscotch.State
 
-namespace ModuleDeprecation
+namespace Mathlib.ModuleDeprecation
 
 /-- The fix identifier recorded on every migration this fix produces. -/
 def fixId : String := "module-deprecation"
@@ -253,11 +253,11 @@ def rewriteImports (contents oldModule : String) (newModules : Array String) : O
   else
     return none
 
-end ModuleDeprecation
+end Mathlib.ModuleDeprecation
 
 /-! ### IO support for the module-deprecation fix -/
 
-namespace ModuleDeprecation
+namespace Mathlib.ModuleDeprecation
 
 open Hopscotch.AutoFix (FixContext DetectResult Fix)
 
@@ -587,17 +587,17 @@ private def detect (ctx : FixContext) : IO DetectResult := do
       advisories := advisories.push { fixId := fixId, oldModule := m, newModules := repls }
   return { migrations, advisories, notes }
 
-end ModuleDeprecation
+end Mathlib.ModuleDeprecation
 
 /-- The module-deprecation automated fix. -/
 def moduleDeprecationFix : Fix := {
-  id := ModuleDeprecation.fixId
+  id := Mathlib.ModuleDeprecation.fixId
   description :=
     "Repair downstream imports of dependency modules that were deleted or \
      deprecated (deprecated_module shims): propose the shim's replacement \
      imports, and flag still-working imports that resolve through a shim."
-  detect := ModuleDeprecation.detect
-  apply := ModuleDeprecation.applyMigrationsToWorkspace
+  detect := Mathlib.ModuleDeprecation.detect
+  apply := Mathlib.ModuleDeprecation.applyMigrationsToWorkspace
 }
 
 end Hopscotch.AutoFix
