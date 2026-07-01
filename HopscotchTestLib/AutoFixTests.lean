@@ -61,6 +61,30 @@ private def «parse a real deprecated_module shim» : IO Unit := do
     (parseShimImports shim)
     "only the import targets are extracted; module/deprecated_module/blank lines are ignored"
 
+private def «parseShimImports drops the deprecated_module command import» : IO Unit := do
+  -- An empty "upstreamed to core" shim: its only import is the command module,
+  -- which is infrastructure, not a re-export — so nothing is a migration target.
+  let emptyShim := String.intercalate "\n" [
+    "module -- shake: keep-all",
+    "",
+    "public import Mathlib.Tactic.Linter.DeprecatedModule",
+    "",
+    "deprecated_module \"Upstreamed to core\" (since := \"2026-02-26\")",
+    ""
+  ]
+  assertEq (#[] : Array String) (parseShimImports emptyShim)
+    "an empty shim's only (command) import is dropped, so the migration removes the import"
+  -- A shim that also re-exports a real module keeps it, minus the command import.
+  let realShim := String.intercalate "\n" [
+    "module",
+    "public import Mathlib.Tactic.Linter.DeprecatedModule",
+    "public import Demo.New",
+    "deprecated_module (since := \"2026-01-01\")",
+    ""
+  ]
+  assertEq #["Demo.New"] (parseShimImports realShim)
+    "the command import is excluded while genuine re-exports are kept"
+
 private def «matchImportOf? is exact on the module token» : IO Unit := do
   assertEq (some ("", "import ", "")) (matchImportOf? "import Demo.Old" "Demo.Old")
     "plain import matches"
@@ -1059,6 +1083,7 @@ private def «a renamed module resolves to its rename target» : IO Unit := do
 def suite : TestSuite := #[
   test_case «module name ↔ relative path»,
   test_case «parse a real deprecated_module shim»,
+  test_case «parseShimImports drops the deprecated_module command import»,
   test_case «matchImportOf? is exact on the module token»,
   test_case «rewriteImports replaces and preserves style»,
   test_case «shim recognition, comment awareness, and warning parsing»,

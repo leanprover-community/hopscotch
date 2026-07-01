@@ -129,10 +129,21 @@ private def topLevelLines (contents : String) : Array String := Id.run do
     depth := lineEndDepth line.toList depth false
   return out
 
+/-- The Mathlib module that defines the `deprecated_module` command and its
+    `linter.deprecated.module` (module deprecation is a Mathlib feature, not a
+    Lean-core one). A shim must `public import` it for the command to elaborate,
+    but it is infrastructure — not a module the shim re-exports — so it is never
+    a migration target. Excluding it lets an otherwise-empty shim ("upstreamed to
+    core") yield `newModules = []`, i.e. an import *removal* rather than a rewrite
+    to it. -/
+def deprecatedModuleCommandModule : String :=
+  "Mathlib.Tactic.Linter.DeprecatedModule"
+
 /-- Extract the dotted module names imported by a `deprecated_module` shim (or any
     Lean file): the targets of every `import` / `public import` / `private import`
     line outside block comments. Lines like `module`, `deprecated_module …`,
-    comments and blanks are ignored. -/
+    comments and blanks are ignored, as is `deprecatedModuleCommandModule` (the
+    import that provides the `deprecated_module` command itself, not a re-export). -/
 def parseShimImports (contents : String) : Array String := Id.run do
   let mut mods : Array String := #[]
   for rawLine in topLevelLines contents do
@@ -140,7 +151,7 @@ def parseShimImports (contents : String) : Array String := Id.run do
     for kw in importKeywords do
       if trimmed.startsWith kw then
         let token := ((trimmed.drop kw.length).takeWhile (fun c => !c.isWhitespace)).copy
-        unless token.isEmpty do
+        unless token.isEmpty || token == deprecatedModuleCommandModule do
           mods := mods.push token
         break
   return mods
