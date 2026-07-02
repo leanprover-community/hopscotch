@@ -1,20 +1,15 @@
 import Hopscotch.AutoFix.Framework
-import Hopscotch.AutoFix.Mathlib.ModuleDeprecation
+import Hopscotch.AutoFix.Migration
 
 /-!
 # Automated fixes
 
-Umbrella module for hopscotch's automated-fix machinery. It re-exports the
-generic framework (`Hopscotch.AutoFix.Framework`) and the concrete fixes
-(`Hopscotch.AutoFix.Mathlib.ModuleDeprecation`), and defines the default registry
-the CLI installs on a `dep` run.
+Umbrella for hopscotch's **dependency-agnostic** automated-fix machinery: the
+generic framework (`Hopscotch.AutoFix.Framework`) and the import-migration
+primitive (`Hopscotch.AutoFix.Migration`).
+
+Concrete fixes are not bundled here. A fix such as the mathlib `deprecated_module`
+detector (`Hopscotch.AutoFix.Mathlib.ModuleDeprecation`) is injected into the CLI
+by the composition root (`Main`), so this core library stays free of any specific
+dependency's conventions.
 -/
-
-namespace Hopscotch.AutoFix
-
-/-- The default registry of automated fixes, in application order. The framework
-    is dependency-agnostic; Mathlib's module-deprecation fix ships as a default
-    because Mathlib dominates the ecosystem. -/
-def standardAutoFixes : Array Fix := #[moduleDeprecationFix]
-
-end Hopscotch.AutoFix

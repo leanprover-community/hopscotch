@@ -1,6 +1,14 @@
 import Hopscotch
+import Hopscotch.AutoFix.Mathlib.ModuleDeprecation
 
 open Hopscotch
+
+/-- The automated fixes this binary ships with — the composition root where
+    dependency-specific fixes are plugged in. The core library and CLI are
+    dependency-agnostic and take the fix registry as input; here we hook in
+    mathlib's `deprecated_module` fix because mathlib dominates the ecosystem.
+    A different binary could inject a different set (or none). -/
+def hopscotchFixes : Array AutoFix.Fix := #[AutoFix.moduleDeprecationFix]
 
 /-- CLI entrypoint.
     Exit 0: session completed with no failures.
@@ -8,14 +16,14 @@ open Hopscotch
     Exit 2: an unexpected error in the tool itself. -/
 def main (args : List String) : IO UInt32 := do
   try
-    match ← CLI.parseArgs args with
+    match ← CLI.parseArgs hopscotchFixes args with
     | .run config =>
         let stdoutColor ← detectStdoutColor
         let result ← Runner.run config IO.println stdoutColor
         IO.println <| colorize stdoutColor .info result.summary
         return UInt32.ofNat result.exitCode
     | .fix config =>
-        return ← FixCommand.run config IO.println
+        return ← FixCommand.run hopscotchFixes config IO.println
     | .clean projectDir =>
         let stateRoot := projectDir / ".lake" / "hopscotch"
         if ← stateRoot.pathExists then

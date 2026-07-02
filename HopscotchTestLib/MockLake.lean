@@ -1,4 +1,5 @@
 import HopscotchTestLib.TestUtil
+import Hopscotch.AutoFix.Mathlib.ModuleDeprecation
 
 namespace HopscotchTestLib
 

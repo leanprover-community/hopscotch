@@ -1015,7 +1015,7 @@ private def «continue reconstructs the run config from saved state» : IO Unit 
         { runTest := true, buildArgs := #["-Kfoo=bar"] }
       quiet := true
     } ignoreOutput
-    match ← CLI.parseArgs ["continue", "--project-dir", projectDir.toString] with
+    match ← CLI.parseArgs #[AutoFix.moduleDeprecationFix] ["continue", "--project-dir", projectDir.toString] with
     | .run cfg =>
         assertEq .linear cfg.runMode "continue should restore the run mode"
         assertEq "batteries" cfg.strategy.scope "continue should restore the dependency scope"
@@ -1027,7 +1027,7 @@ private def «continue reconstructs the run config from saved state» : IO Unit 
         | other => fail s!"continue should resume from the stored item list, got {repr other}"
     | _ => fail "continue should parse to a run command"
     -- --no-auto-fix is honored on continue.
-    match ← CLI.parseArgs ["continue", "--project-dir", projectDir.toString, "--no-auto-fix"] with
+    match ← CLI.parseArgs #[AutoFix.moduleDeprecationFix] ["continue", "--project-dir", projectDir.toString, "--no-auto-fix"] with
     | .run cfg => assertTrue cfg.autoFixes.isEmpty "--no-auto-fix should disable detection on continue"
     | _ => fail "continue should parse to a run command"
 
@@ -1048,7 +1048,7 @@ private def «continue reconstructs a toolchain session» : IO Unit := do
       runMode := .linear
       quiet := true
     } ignoreOutput
-    match ← CLI.parseArgs ["continue", "--project-dir", projectDir.toString] with
+    match ← CLI.parseArgs #[AutoFix.moduleDeprecationFix] ["continue", "--project-dir", projectDir.toString] with
     | .run cfg =>
         assertEq "toolchain" cfg.strategy.scope "continue should rebuild the toolchain strategy"
         assertEq #["lake build"] (cfg.strategy.verify.map (·.label))
@@ -1116,7 +1116,7 @@ private def «continue preserves a stripped (skip-build) verify pipeline» : IO 
       strategy := { baseStrategy with verify := #[] }
       quiet := true
     } ignoreOutput
-    match ← CLI.parseArgs ["continue", "--project-dir", projectDir.toString] with
+    match ← CLI.parseArgs #[AutoFix.moduleDeprecationFix] ["continue", "--project-dir", projectDir.toString] with
     | .run cfg =>
         assertTrue cfg.strategy.verify.isEmpty
           "continue should preserve the stripped verify pipeline from saved state"
@@ -1128,7 +1128,7 @@ private def «continue without a session errors clearly» : IO Unit := do
     let projectDir := dir / "downstream"
     makeDownstreamProject projectDir
     try
-      let _ ← CLI.parseArgs ["continue", "--project-dir", projectDir.toString]
+      let _ ← CLI.parseArgs #[AutoFix.moduleDeprecationFix] ["continue", "--project-dir", projectDir.toString]
       fail "continue with no stored session should error"
     catch error =>
       assertContains "no hopscotch session found" error.toString
@@ -1157,7 +1157,7 @@ private def «continue on a pre-spec session errors clearly» : IO Unit := do
       updatedAt := "2026-01-01T00:00:00Z"
     }
     try
-      let _ ← CLI.parseArgs ["continue", "--project-dir", projectDir.toString]
+      let _ ← CLI.parseArgs #[AutoFix.moduleDeprecationFix] ["continue", "--project-dir", projectDir.toString]
       fail "continue on a session without a strategy spec should error"
     catch error =>
       assertContains "older hopscotch" error.toString
