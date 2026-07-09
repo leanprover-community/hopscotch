@@ -589,15 +589,19 @@ private def detect (ctx : FixContext) : IO DetectResult := do
 
 end Mathlib.ModuleDeprecation
 
+namespace Mathlib
+
 /-- The module-deprecation automated fix. -/
 def moduleDeprecationFix : Fix := {
-  id := Mathlib.ModuleDeprecation.fixId
+  id := ModuleDeprecation.fixId
   description :=
     "Repair downstream imports of dependency modules that were deleted or \
      deprecated (deprecated_module shims): propose the shim's replacement \
      imports, and flag still-working imports that resolve through a shim."
-  detect := Mathlib.ModuleDeprecation.detect
-  apply := Mathlib.ModuleDeprecation.applyMigrationsToWorkspace
+  detect := ModuleDeprecation.detect
+  apply := ModuleDeprecation.applyMigrationsToWorkspace
 }
+
+end Mathlib
 
 end Hopscotch.AutoFix

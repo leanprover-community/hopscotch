@@ -8,7 +8,7 @@ open Hopscotch
     dependency-agnostic and take the fix registry as input; here we hook in
     mathlib's `deprecated_module` fix because mathlib dominates the ecosystem.
     A different binary could inject a different set (or none). -/
-def hopscotchFixes : Array AutoFix.Fix := #[AutoFix.moduleDeprecationFix]
+def hopscotchFixes : Array AutoFix.Fix := #[AutoFix.Mathlib.moduleDeprecationFix]
 
 /-- CLI entrypoint.
     Exit 0: session completed with no failures.

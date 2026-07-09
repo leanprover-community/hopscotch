@@ -8,7 +8,7 @@ namespace HopscotchTestLib.ParseTests
 
 /-- Assert that parsing the given args succeeds and return the config. -/
 private def parse (args : List String) : IO Runner.Config := do
-  match ← CLI.parseArgs #[AutoFix.moduleDeprecationFix] args with
+  match ← CLI.parseArgs #[AutoFix.Mathlib.moduleDeprecationFix] args with
   | .run config => return config
   | .clean _ => throw <| IO.userError "expected run command, got clean"
   | .fix _ => throw <| IO.userError "expected run command, got fix"
@@ -17,14 +17,14 @@ private def parse (args : List String) : IO Runner.Config := do
 /-- Assert that parsing the given args fails. -/
 private def assertParseError (args : List String) (hint : String) : IO Unit := do
   try
-    let _ ← CLI.parseArgs #[AutoFix.moduleDeprecationFix] args
+    let _ ← CLI.parseArgs #[AutoFix.Mathlib.moduleDeprecationFix] args
     fail s!"expected parse error but succeeded: {hint}"
   catch _ =>
     pure ()
 
 /-- Assert that parsing the given args yields a `fix` command and return its config. -/
 private def parseFix (args : List String) : IO FixCommand.Config := do
-  match ← CLI.parseArgs #[AutoFix.moduleDeprecationFix] args with
+  match ← CLI.parseArgs #[AutoFix.Mathlib.moduleDeprecationFix] args with
   | .fix config => return config
   | .run _ => throw <| IO.userError "expected fix command, got run"
   | .clean _ => throw <| IO.userError "expected fix command, got clean"

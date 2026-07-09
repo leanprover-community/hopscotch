@@ -5,6 +5,7 @@ import Hopscotch.AutoFix.Mathlib.ModuleDeprecation
 open Hopscotch
 open Hopscotch.State
 open Hopscotch.AutoFix
+open Hopscotch.AutoFix.Mathlib
 open Hopscotch.AutoFix.Mathlib.ModuleDeprecation
 
 namespace HopscotchTestLib.AutoFixTests
@@ -713,7 +714,7 @@ private def «end-to-end linear: boundary proposed, fix applied, re-run finds th
       "the run leaves the workspace untouched"
 
     -- The consumer opts in: apply the proposed fix.
-    let applyCode ← Hopscotch.FixCommand.run #[moduleDeprecationFix] {action := .apply, projectDir := projectDir } ignoreOutput
+    let applyCode ← Hopscotch.FixCommand.run #[moduleDeprecationFix] { action := .apply, projectDir := projectDir } ignoreOutput
     assertEq 0 applyCode "fix apply succeeds"
     assertTrue ((← IO.FS.readFile (projectDir / "Foo.lean")).contains "import Demo.New")
       "fix apply rewrites the import"
@@ -853,7 +854,7 @@ private def «hopscotch fix list/apply/revert round-trips a proposed migration»
 
     -- list: reports the proposal and the advisory without touching the workspace.
     let (out, getLines) ← captureOutput
-    let listCode ← Hopscotch.FixCommand.run #[moduleDeprecationFix] {action := .list, projectDir := projectDir } out
+    let listCode ← Hopscotch.FixCommand.run #[moduleDeprecationFix] { action := .list, projectDir := projectDir } out
     assertEq 0 listCode "list succeeds"
     let lines ← getLines
     assertTrue (lines.any fun l => l.contains "Demo.Old" && l.contains "Demo.New")
@@ -864,14 +865,14 @@ private def «hopscotch fix list/apply/revert round-trips a proposed migration»
       "list does not modify the workspace"
 
     -- apply: rewrites the import in the (otherwise pristine) checkout.
-    let applyCode ← Hopscotch.FixCommand.run #[moduleDeprecationFix] {action := .apply, projectDir := projectDir } ignoreOutput
+    let applyCode ← Hopscotch.FixCommand.run #[moduleDeprecationFix] { action := .apply, projectDir := projectDir } ignoreOutput
     assertEq 0 applyCode "apply succeeds"
     let migrated ← IO.FS.readFile (projectDir / "Foo.lean")
     assertTrue (migrated.contains "import Demo.New") "apply rewrites the import"
     assertTrue (!(migrated.contains "import Demo.Old")) "old import removed by apply"
 
     -- revert: restores the original from the backup apply created.
-    let revertCode ← Hopscotch.FixCommand.run #[moduleDeprecationFix] {action := .revert, projectDir := projectDir } ignoreOutput
+    let revertCode ← Hopscotch.FixCommand.run #[moduleDeprecationFix] { action := .revert, projectDir := projectDir } ignoreOutput
     assertEq 0 revertCode "revert succeeds"
     assertTrue ((← IO.FS.readFile (projectDir / "Foo.lean")).contains "import Demo.Old")
       "revert restores the original import"
@@ -914,7 +915,7 @@ private def «fix apply migrates advisories by default; --no-advisories restrict
 
     -- Default apply: clean advisories migrated too, partial ones skipped loudly.
     let (out, getLines) ← captureOutput
-    let code2 ← Hopscotch.FixCommand.run #[moduleDeprecationFix] {action := .apply, projectDir := projectDir } out
+    let code2 ← Hopscotch.FixCommand.run #[moduleDeprecationFix] { action := .apply, projectDir := projectDir } out
     assertEq 0 code2 "plain apply succeeds"
     let src2 ← IO.FS.readFile (projectDir / "Foo.lean")
     assertTrue (src2.contains "import Demo.Adv2") "the clean advisory is migrated by default"
@@ -950,7 +951,7 @@ private def «hopscotch fix apply skips unknown fix types» : IO Unit := do
     }
     Hopscotch.Results.writeResults paths none state
     let (out, getLines) ← captureOutput
-    let code ← Hopscotch.FixCommand.run #[moduleDeprecationFix] {action := .apply, projectDir := projectDir } out
+    let code ← Hopscotch.FixCommand.run #[moduleDeprecationFix] { action := .apply, projectDir := projectDir } out
     assertEq 0 code "apply succeeds while skipping the unknown fix"
     let lines ← getLines
     assertTrue (lines.any (·.contains "skipping [future-fix]"))
@@ -987,7 +988,7 @@ private def «hopscotch fix rejects a results.json from an incompatible schema»
     assertTrue (stale != original) "the test patched the on-disk schema version"
     IO.FS.writeFile paths.resultsPath stale
     let (out, getLines) ← captureOutput
-    let code ← Hopscotch.FixCommand.run #[moduleDeprecationFix] {action := .apply, projectDir := projectDir } out
+    let code ← Hopscotch.FixCommand.run #[moduleDeprecationFix] { action := .apply, projectDir := projectDir } out
     assertEq 2 code "an incompatible results schema is rejected with exit 2"
     assertTrue ((← getLines).any (·.contains "schema version"))
       "the failure names the schema-version mismatch instead of a raw JSON error"
@@ -1035,7 +1036,7 @@ private def «fix apply --from applies a results.json produced elsewhere» : IO 
       "the backup lands in the dev project's own store, not the CI one"
 
     -- revert (no --from) restores from the dev project's own backup store.
-    let revertCode ← Hopscotch.FixCommand.run #[moduleDeprecationFix] {action := .revert, projectDir := devDir } ignoreOutput
+    let revertCode ← Hopscotch.FixCommand.run #[moduleDeprecationFix] { action := .revert, projectDir := devDir } ignoreOutput
     assertEq 0 revertCode "revert succeeds on the dev checkout"
     assertTrue ((← IO.FS.readFile (devDir / "Foo.lean")).contains "import Demo.Old")
       "revert restores the original import on the dev checkout"
