@@ -84,8 +84,9 @@ structure Config where
   resultsJsonPath : Option System.FilePath := none
   /-- Automated-fix registry whose detection runs once against the failure
       boundary after a run stops (proposals only; nothing is applied). Empty
-      disables detection. The CLI populates this with `AutoFix.standardAutoFixes`
-      unless `--no-auto-fix` is passed; library callers may inject their own fixes. -/
+      disables detection. The CLI populates this with the fix registry injected at
+      the composition root (`Main`) unless `--no-auto-fix` is passed; library callers
+      may inject their own fixes. -/
   autoFixes : Array Hopscotch.AutoFix.Fix := #[]
   strategy : RunStrategy
 

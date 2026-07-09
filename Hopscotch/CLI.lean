@@ -190,7 +190,8 @@ private def parseDepOptions (state : DepParseState) (args : List String) : IO De
   | _ =>
       throw <| IO.userError depUsage
 
-private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
+private def buildDepConfig (availableFixes : Array AutoFix.Fix)
+    (state : DepParseState) : IO Runner.Config := do
   let cfg : DepConfigFile ← loadConfigFile state.configFile
   let allowDirtyWorkspace := (state.allowDirtyWorkspace <|> cfg.allowDirtyWorkspace).getD false
   let keepLastGood := (state.keepLastGood <|> cfg.keepLastGood).getD false
@@ -236,15 +237,16 @@ private def buildDepConfig (state : DepParseState) : IO Runner.Config := do
     allowDirtyWorkspace := allowDirtyWorkspace
     keepLastGood := keepLastGood
     resultsJsonPath := state.resultsJsonPath
-    autoFixes := if autoFixEnabled then Hopscotch.AutoFix.standardAutoFixes else #[]
+    autoFixes := if autoFixEnabled then availableFixes else #[]
     strategy := strategy
   }
 
-private def parseDep (args : List String) : IO Runner.Config := do
+private def parseDep (availableFixes : Array AutoFix.Fix)
+    (args : List String) : IO Runner.Config := do
   match args with
   | dependencyName :: rest =>
       let state ← parseDepOptions { dependencyName := dependencyName } rest
-      buildDepConfig state
+      buildDepConfig availableFixes state
   | [] =>
       throw <| IO.userError depUsage
 
@@ -414,7 +416,8 @@ private def parseContinueOptions (state : ContinueParseState)
     configuration come from `state.json`; only the "how to run" flags (project dir,
     quiet, dirty-workspace, keep-last-good, auto-fix, results mirror) come from the
     `continue` invocation, since none of those affect what pass/fail means. -/
-private def buildContinueConfig (st : ContinueParseState) : IO Runner.Config := do
+private def buildContinueConfig (availableFixes : Array AutoFix.Fix)
+    (st : ContinueParseState) : IO Runner.Config := do
   let projectDir := st.projectDir.getD "."
   let paths ← State.mkPaths projectDir
   -- `Runner.run` re-reads this state below (its resume path), so `state.json` is parsed
@@ -449,12 +452,13 @@ private def buildContinueConfig (st : ContinueParseState) : IO Runner.Config := 
     -- Auto-fix detection is a `dep`-only feature (toolchain runs never enable it), so a
     -- continued toolchain session matches the original by leaving it off regardless of
     -- `--no-auto-fix`/`--auto-fix`.
-    autoFixes := if st.autoFix && spec.kind == .dep then Hopscotch.AutoFix.standardAutoFixes else #[]
+    autoFixes := if st.autoFix && spec.kind == .dep then availableFixes else #[]
     strategy := strategy
   }
 
-private def parseContinue (args : List String) : IO Runner.Config := do
-  buildContinueConfig (← parseContinueOptions {} args)
+private def parseContinue (availableFixes : Array AutoFix.Fix)
+    (args : List String) : IO Runner.Config := do
+  buildContinueConfig availableFixes (← parseContinueOptions {} args)
 
 -- ---------------------------------------------------------------------------
 -- Entrypoint
@@ -469,14 +473,14 @@ inductive Command where
   | help
 
 /-- Parse CLI arguments into a `Command`, dispatching on the subcommand. -/
-def parseArgs (args : List String) : IO Command := do
+def parseArgs (availableFixes : Array AutoFix.Fix) (args : List String) : IO Command := do
   match args with
   | "--version" :: _    => return .version
   | "--help" :: _       => return .help
   | "-h" :: _           => return .help
-  | "dep" :: rest       => return .run (← parseDep rest)
+  | "dep" :: rest       => return .run (← parseDep availableFixes rest)
   | "toolchain" :: rest => return .run (← parseToolchain rest)
-  | "continue" :: rest  => return .run (← parseContinue rest)
+  | "continue" :: rest  => return .run (← parseContinue availableFixes rest)
   | "fix" :: rest       => return .fix (← parseFix rest)
   | "clean" :: rest     =>
       let projectDir ← parseCleanOptions none rest

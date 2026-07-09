@@ -43,7 +43,8 @@ structure Config where
 
 /-- Execute a `hopscotch fix` command. Returns the process exit code (0 success,
     2 on a user-facing error such as a missing results file). -/
-def run (config : Config) (output : String → IO Unit := IO.println) : IO UInt32 := do
+def run (availableFixes : Array AutoFix.Fix) (config : Config)
+    (output : String → IO Unit := IO.println) : IO UInt32 := do
   let paths ← mkPaths config.projectDir
   -- `revert` consults only the backup store — itself the record of what `apply`
   -- touched — so it needs no results.json. Handle it before the results gate,
@@ -116,7 +117,7 @@ def run (config : Config) (output : String → IO Unit := IO.println) : IO UInt3
       -- Dispatch each migration to its owning fix via the registry; a results.json
       -- written by a newer hopscotch could carry fix types this build does not
       -- know, which are skipped loudly rather than misread.
-      -- Note: this dispatches only against `standardAutoFixes`. A `results.json`
+      -- Note: this dispatches against the injected `availableFixes` registry. A `results.json`
       -- produced by a *library* caller that injected a custom `Config.autoFixes`
       -- registry will record migrations the CLI `fix apply` cannot resolve — those
       -- are skipped here as "unknown fix type". Custom fixes must be applied by the
@@ -130,7 +131,7 @@ def run (config : Config) (output : String → IO Unit := IO.println) : IO UInt3
       let mut changed : Array String := #[]
       for fixId in fixIds do
         let group := toApply.filter (·.fixId == fixId)
-        match standardAutoFixes.find? (·.id == fixId) with
+        match availableFixes.find? (·.id == fixId) with
         | some fix =>
             changed := changed ++ (← fix.apply paths config.projectDir group)
             applied := applied + group.size

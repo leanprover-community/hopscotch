@@ -3,7 +3,6 @@
 import Hopscotch.ItemList
 import Hopscotch.AutoFix.Migration
 import Hopscotch.AutoFix.Framework
-import Hopscotch.AutoFix.ModuleDeprecation
 import Hopscotch.AutoFix
 import Hopscotch.GitHub
 import Hopscotch.LakefileProcessor
