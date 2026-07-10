@@ -138,7 +138,12 @@ def run (availableFixes : Array AutoFix.Fix) (config : Config)
         | none =>
             for m in group do
               output s!"skipping [{m.fixId}] {m.oldModule}: unknown fix type for this hopscotch version"
-      output s!"Applied {applied} migration(s); rewrote {changed.size} file(s) in {config.projectDir}."
+      -- "fix" (not "migration") to match `hopscotch fix` / `proposedFixes`, with
+      -- real pluralization and no trailing project-dir (it renders as "in .." at
+      -- the repo root and adds nothing to a per-project summary).
+      let fixNoun := if applied == 1 then "fix" else "fixes"
+      let fileNoun := if changed.size == 1 then "file" else "files"
+      output s!"Applied {applied} {fixNoun}; changed {changed.size} {fileNoun}."
       return 0
   | .revert =>
       -- Unreachable: `revert` is handled above, before the results.json gate.
