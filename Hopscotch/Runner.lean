@@ -29,6 +29,39 @@ private def clearCulpritLogs (paths : Paths) : IO Unit := do
   if ← paths.culpritLogsDir.pathExists then
     IO.FS.removeDirAll paths.culpritLogsDir
 
+/-- Detect whether a bump log contains markers of a transient cache fetch failure.
+    Returns `true` if the log contains known cache-failure strings. -/
+private def isCacheFailure (logPath : System.FilePath) : IO Bool := do
+  if !(← logPath.pathExists) then return false
+  let contents ← IO.FS.readFile logPath
+  -- Match known markers for cache fetch failures from lake's cache tool.
+  let cacheFailureMarkers := [
+    "failed to fetch cache",
+    "download(s) failed",
+    "Transfer failed"
+  ]
+  return cacheFailureMarkers.any (contents.contains ·)
+
+/-- Run a bump step, and retry it once when its log reports a cache fetch
+    failure.  The log keeps both attempts in the order they ran, so whoever
+    reads its tail sees the attempt that decided the outcome. -/
+private def runBumpWithRetry (bumpStep : ProbeStep) (projectDir logPath : System.FilePath)
+    (quiet : Bool) (emit : ConsoleStyle → String → IO Unit) : IO Bool := do
+  let firstAttempt ← bumpStep.run projectDir logPath quiet
+  if firstAttempt then return true
+  if !(← isCacheFailure logPath) then return false
+  emit .running s!"[{← nowUtcString}] Retrying {bumpStep.label}: the log reports a cache fetch failure"
+  -- The retry truncates the log, so hold the first attempt in memory and write
+  -- both attempts back in order once the retry finishes.
+  let firstAttemptLog ← IO.FS.readFile logPath
+  let secondAttempt ← bumpStep.run projectDir logPath quiet
+  let secondAttemptLog ← IO.FS.readFile logPath
+  IO.FS.writeFile logPath <| String.join
+    [ firstAttemptLog,
+      "\n--- Attempt 1 could not fetch the cache. Retry output follows. ---\n",
+      secondAttemptLog ]
+  return secondAttempt
+
 /-- Delete everything under `<projectDir>/.lake/` except the `hopscotch` subfolder
     (which holds the persisted state we want to keep across probes).  No-op when
     `.lake/` does not exist yet. -/
@@ -57,7 +90,7 @@ private def restoreTo (config : Config) (paths : Paths) (commit : String)
   let bumpStep := config.strategy.mkBump commit
   -- Fixed log path: safe because restoreTo is called at most once per run (see note above).
   let logPath := paths.logsDir / "restore.log"
-  let ok ← bumpStep.run paths.projectDir logPath config.quiet
+  let ok ← runBumpWithRetry bumpStep paths.projectDir logPath config.quiet emit
   unless ok do
     emit .running s!"[{← nowUtcString}] Warning: could not restore to {commit} (see {logPath})"
 
@@ -182,7 +215,7 @@ private def runProbe (config : Config) (paths : Paths) (base : PersistedState)
     let _ ← saveState paths config.resultsJsonPath <| buildRunningState base index commit (some bumpStep.stage)
     let bumpLogPath := State.logPath paths namePrefix commit bumpStep.stage
     emit .running s!"[{← nowUtcString}] Running {bumpStep.label}"
-    let bumpOk ← bumpStep.run paths.projectDir bumpLogPath config.quiet
+    let bumpOk ← runBumpWithRetry bumpStep paths.projectDir bumpLogPath config.quiet emit
     emit (if bumpOk then .success else .failure)
       s!"[{← nowUtcString}] Finished {bumpStep.label} (log file: {bumpLogPath})"
     if !bumpOk then

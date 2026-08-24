@@ -34,6 +34,11 @@ def mockLakeArgsPath (projectDir : System.FilePath) : System.FilePath :=
 def mockLakeEnvPath (projectDir : System.FilePath) : System.FilePath :=
   mockLakeDir projectDir / "env.log"
 
+/-- File storing update attempt counts for cache retry testing.
+    Used to simulate transient cache failures that succeed on retry. -/
+def mockLakeRetryCachePath (projectDir : System.FilePath) : System.FilePath :=
+  mockLakeDir projectDir / "retry-cache.log"
+
 /-- Environment variable used by the tests to locate the mock `lake` executable. -/
 def mockLakeCommandEnvVar : String :=
   "HOPSCOTCH_MOCK_LAKE_EXE"
@@ -53,6 +58,8 @@ def configureMockLake (projectDir : System.FilePath) (mode : String) : IO Unit :
     IO.FS.writeFile (mockLakeArgsPath projectDir) ""
   if !(← (mockLakeEnvPath projectDir).pathExists) then
     IO.FS.writeFile (mockLakeEnvPath projectDir) ""
+  if !(← (mockLakeRetryCachePath projectDir).pathExists) then
+    IO.FS.writeFile (mockLakeRetryCachePath projectDir) ""
 
 /-- Extract the last `rev = "..."` entry from the fixture lakefile. -/
 private def readPinnedRev (projectDir : System.FilePath) : IO String := do
@@ -77,6 +84,8 @@ private def readPinnedRev (projectDir : System.FilePath) : IO String := do
 --   "missing-driver"                   — test/lint emit Lake's "no <test|lint> driver configured" error and fail
 --                                        (build/update still succeed); exercises the no-driver short-circuit
 --   "fail-update"                      — update fails for revs prefixed "badupdate"
+--   "fail-update-cache"                — update fails with cache markers for revs prefixed "badcache",
+--                                        simulates a transient cache fetch failure that can be retried
 --   "fail-build-and-mutate-toolchain"  — update rewrites lean-toolchain for revs prefixed "mutatetoolchain",
 --                                        then build fails for revs prefixed "badbuild"
 --   "fail-build-toolchain"             — build fails when lean-toolchain starts with "badbuild"
@@ -124,6 +133,34 @@ def runMockLake (args : List String) : IO UInt32 := do
     pure 1
   else if mode == "fail-update" && stage == "update" && rev.startsWith "badupdate" then
     pure 1
+  else if mode == "fail-update-cache" && stage == "update" && rev.startsWith "badcache" then
+    -- Simulates a transient cache fetch failure that succeeds on retry.
+    -- Track attempt count per revision to fail on the first attempt but succeed on the retry.
+    let retryCachePath := mockLakeRetryCachePath projectDir
+    let existing ← IO.FS.readFile retryCachePath
+    let lines := existing.splitOn "\n" |>.filter (!·.isEmpty)
+    let keyPrefix := s!"{rev}:"
+    let (count, otherLines) := lines.foldl
+      (fun (cnt, others) line =>
+        if line.startsWith keyPrefix then
+          ((line.drop keyPrefix.length).toNat?.getD 0 + 1, others)
+        else
+          (cnt, line :: others))
+      (0, [])
+    -- Write back the updated count for this revision.
+    let updated := s!"{keyPrefix}{count}\n" ++ (String.intercalate "\n" otherLines)
+    IO.FS.writeFile retryCachePath updated
+    -- On the first attempt (count == 0), fail with cache markers.
+    if count == 0 then
+      IO.println "Downloading mathlib cache files..."
+      IO.println "39 download(s) failed"
+      IO.println "/path/to/cache/file.ltar: removing corrupted file"
+      IO.println ".ltar.part: Transfer failed (error code: 0): Send failure: Broken pipe   (×39)"
+      IO.println "error: mathlib: failed to fetch cache"
+      pure 1
+    else
+      -- On retry (count >= 1), succeed as if the cache was fetched successfully.
+      pure 0
   else if mode == "fail-build-toolchain" && stage == "build" && toolchain.startsWith "badbuild" then
     pure 1
   else if mode == "lean-imports" then
