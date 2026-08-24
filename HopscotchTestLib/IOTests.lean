@@ -809,6 +809,47 @@ private def «strip GITHUB_TOKEN from lake child env» : IO Unit := do
       assertEq "GITHUB_TOKEN=(unset)" line
         "lake child observed GITHUB_TOKEN in its environment"
 
+/-- Scenario: when `lake update` fails due to a transient cache fetch error, the bump step
+    retries once. The first attempt fails with cache markers, and the retry succeeds. -/
+private def «bump retries on cache fetch failure» : IO Unit := do
+  withTempDir "hopscotch-cache-retry" fun dir => do
+    -- Prepare a downstream project with a commit that fails cache fetch on first attempt.
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\nbadcache\ngood2\n"
+    configureMockLake projectDir "fail-update-cache"
+    -- Act: run the stepping session; cache retry should succeed on the second attempt.
+    let result ← Runner.run {
+      itemSource := .file commitListPath
+      projectDir := projectDir
+      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+      quiet := true
+    } ignoreOutput
+    -- Assert: the run should complete successfully (cache retry succeeded).
+    assertEq 0 result.exitCode "cache retry should allow the run to complete"
+    let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
+    assertEq (.fullySuccessful) state.status "state should record completion"
+    assertEq (some "good2") state.lastSuccessfulCommit
+      "run should advance past the cache-retried commit"
+    -- Assert: the bump log keeps both attempts, in the order they ran, so a
+    -- reader who tails it sees the retry that decided the outcome.
+    -- The badcache commit is at index 1 (after good1), so the log path uses namePrefix "1".
+    let bumpLogPath := projectDir / ".lake" / "hopscotch" / "logs" / "1-badcache-bump.log"
+    assertTrue (← bumpLogPath.pathExists) "bump log should exist"
+    let bumpLog ← IO.FS.readFile bumpLogPath
+    assertTrue (bumpLog.contains "failed to fetch cache")
+      "bump log should keep the first attempt's cache failure"
+    assertTrue (bumpLog.contains "Retry output follows")
+      "bump log should separate the two attempts"
+    let parts := bumpLog.splitOn "Retry output follows"
+    assertTrue (parts.length == 2)
+      "bump log should hold exactly one retry separator"
+    assertTrue (parts.head!.contains "failed to fetch cache")
+      "the failed attempt should come before the separator"
+    assertTrue (!(parts.getLast!.contains "failed to fetch cache"))
+      "the successful retry should come after the separator"
+
 /-- Scenario: with `--test` enabled, a commit that builds but fails `lake test` stops the run
     at the test stage and counts as a failed hop. -/
 private def «lake test failure counts as a failed hop» : IO Unit := do
@@ -1167,6 +1208,7 @@ def suite : TestSuite := #[
   test_case «downstream toolchain command resolution»,
   test_case «stop at first build failure»,
   test_case «stop at first update failure»,
+  test_case «bump retries on cache fetch failure»,
   test_case «resume from failed commit and complete»,
   test_case «reject changed commit list on resume»,
   test_case «complete all-success run»,
