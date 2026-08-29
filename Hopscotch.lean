@@ -16,3 +16,4 @@ import Hopscotch.Util
 import Hopscotch.Results
 import Hopscotch.FixCommand
 import Hopscotch.CLI
+import Hopscotch.CLI.Dispatch
