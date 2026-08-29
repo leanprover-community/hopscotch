@@ -1,5 +1,6 @@
 import HopscotchTestLib.TestUtil
 import HopscotchTestLib.MockLake
+import Hopscotch.CLI.Dispatch
 
 open Hopscotch
 open Hopscotch.State
@@ -84,7 +85,7 @@ private def «stop at first build failure» : IO Unit := do
     assertEq (some "lake build") results.failureStage
       "results.json should expose the build failure stage"
 
-/-- Scenario: a bump failure stops the loop before any verify steps run for that commit. -/
+/-- Scenario: `lake update` failure aborts the run as an infrastructure error. -/
 private def «stop at first update failure» : IO Unit := do
   withTempDir "hopscotch-fail-update" fun dir => do
     -- Prepare a downstream project and commit list that fail during `lake update`.
@@ -93,21 +94,80 @@ private def «stop at first update failure» : IO Unit := do
     makeDownstreamProject projectDir
     IO.FS.writeFile commitListPath "good1\nbadupdate\ngood2\n"
     configureMockLake projectDir "fail-update"
-    -- Act: run the stepping session until the bump failure is reached.
+    -- Act: run the stepping session; `lake update` failure should abort the run.
+    try
+      let _ ← Runner.run {
+        itemSource := .file commitListPath
+        projectDir := projectDir
+        strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+        quiet := true
+      } ignoreOutput
+      fail "lake update failure should abort the run with an error"
+    catch error =>
+      assertContains "`lake update` failed" error.toString
+        "error should mention the lake update failure"
+      assertContains "badupdate" error.toString
+        "error should identify the commit where update failed"
+    -- Assert that no build ran after the update failure.
+    let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
+    assertEq ["update:good1", "build:good1", "update:badupdate"] calls
+      "build should not run after a lake update failure"
+
+/-- Scenario: `lake update` failure exits with code 2 (tool error), not code 1 (failure boundary). -/
+private def «lake update failure returns exit code 2» : IO Unit := do
+  withTempDir "hopscotch-exit-code-2" fun dir => do
+    -- Prepare a downstream project and commit list that fail during `lake update`.
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\nbadupdate\n"
+    configureMockLake projectDir "fail-update"
+    -- Act: invoke the full CLI entry point with raw args (exercises full parsing and dispatch path).
+    let mockLakeExe ← mockLakeCommand
+    let exitCode ← CLI.runCli #[]  -- no fixes for this test
+      ["dep", "batteries", "--project-dir", projectDir.toString, "--file", commitListPath.toString,
+       "--lake-command", mockLakeExe]
+      ignoreOutput
+    -- Assert the exit code is 2 (tool error), not 1 (failure boundary).
+    assertEq (2 : UInt32) exitCode
+      "lake update failure should return exit code 2 (tool error), not 1"
+
+/-- Scenario: a CLI parse error returns exit code 2 (tool error), not 1 (failure boundary). -/
+private def «parse error returns exit code 2» : IO Unit := do
+  withTempDir "hopscotch-parse-error" fun dir => do
+    let projectDir := dir / "downstream"
+    makeDownstreamProject projectDir
+    -- Act: invoke the CLI with an unknown flag, which causes a parse error.
+    let exitCode ← CLI.runCli #[] ["dep", "--unknown-flag"] ignoreOutput
+    -- Assert the exit code is 2 (tool error), not 1.
+    assertEq (2 : UInt32) exitCode
+      "parse errors should return exit code 2 (tool error), not 1"
+
+/-- Scenario: `lake update` failure during a build failure (not bump failure) is still a failure boundary. -/
+private def «lake update success with build failure stops normally» : IO Unit := do
+  withTempDir "hopscotch-update-ok-build-bad" fun dir => do
+    -- Prepare a downstream project where update succeeds but build fails.
+    let projectDir := dir / "downstream"
+    let commitListPath := dir / "commits.txt"
+    makeDownstreamProject projectDir
+    IO.FS.writeFile commitListPath "good1\nbadbuild\ngood2\n"
+    configureMockLake projectDir "fail-build"
+    -- Act: run the stepping session; the build failure (not update) stops the run normally.
     let result ← Runner.run {
       itemSource := .file commitListPath
       projectDir := projectDir
       strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
       quiet := true
     } ignoreOutput
-    -- Assert the failure is recorded at the bump stage and no build runs afterward.
-    assertEq 1 result.exitCode "runner should stop at the first failing bump"
+    -- Assert the run stops with exit code 1 (failure boundary found) and records the failure.
+    assertEq 1 result.exitCode "runner should stop at the first failing build"
     let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (some RunStage.bump) state.stage
-      "bump failures should record the bump stage"
+    assertEq (some "badbuild") state.currentCommit "state should record the failing commit"
+    assertEq (some RunStage.build) state.stage "state should record the build stage, not bump"
+    -- Assert that update ran successfully before the build failed.
     let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
-    assertEq ["update:good1", "build:good1", "update:badupdate"] calls
-      "build should not run after a bump failure"
+    assertEq ["update:good1", "build:good1", "update:badbuild", "build:badbuild"] calls
+      "update should succeed; build should fail and stop the search"
 
 /-- Scenario: restarting after a failure retries that same commit before advancing. -/
 private def «resume from failed commit and complete» : IO Unit := do
@@ -336,24 +396,23 @@ private def «bisect treats update failures as bad» : IO Unit := do
     IO.FS.writeFile commitListPath "good0\ngood1\ngood2\nbadupdate3\nbadupdate4\n"
     configureMockLake projectDir "fail-update"
 
-    let result ← Runner.run {
-      itemSource := .file commitListPath
-      projectDir := projectDir
-      strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
-      runMode := .bisect
-      quiet := true
-    } ignoreOutput
-
-    assertEq 1 result.exitCode "bisect should treat bump failures as bad results"
-    let state ← loadState (projectDir / ".lake" / "hopscotch" / "state.json")
-    assertEq (some "badupdate3") state.currentCommit
-      "bisect should resolve the first failing bump commit at the boundary"
-    assertEq (some RunStage.bump) state.stage
-      "bump failures should be attributed to the bump stage"
-
-    let calls := (← IO.FS.readFile (mockLakeCallsPath projectDir)).trimAscii.copy.splitOn "\n"
-    assertEq ["update:badupdate4", "update:good2", "build:good2", "update:badupdate3", "update:badupdate3"] calls
-      "build should not run after a bump failure; restore attempt runs after search completes"
+    -- Act: when bisect encounters a `lake update` failure, the run should abort
+    -- with an error, not treat it as a bad commit and continue searching.
+    try
+      let _ ← Runner.run {
+        itemSource := .file commitListPath
+        projectDir := projectDir
+        strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
+        runMode := .bisect
+        quiet := true
+      } ignoreOutput
+      fail "lake update failure should abort the run with an error"
+    catch error =>
+      assertContains "`lake update` failed" error.toString
+        "error should mention the lake update failure"
+      -- The first probed commit in bisect is the bad endpoint (badupdate4).
+      assertContains "badupdate4" error.toString
+        "error should identify the commit where update failed"
 
 /-- Scenario: interrupted bisect probes resume at the same commit and reuse cached results. -/
 private def «bisect resumes interrupted midpoint probe» : IO Unit := do
@@ -1167,6 +1226,9 @@ def suite : TestSuite := #[
   test_case «downstream toolchain command resolution»,
   test_case «stop at first build failure»,
   test_case «stop at first update failure»,
+  test_case «lake update failure returns exit code 2»,
+  test_case «parse error returns exit code 2»,
+  test_case «lake update success with build failure stops normally»,
   test_case «resume from failed commit and complete»,
   test_case «reject changed commit list on resume»,
   test_case «complete all-success run»,
