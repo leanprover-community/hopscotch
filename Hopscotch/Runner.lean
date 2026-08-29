@@ -186,6 +186,16 @@ private def runProbe (config : Config) (paths : Paths) (base : PersistedState)
     emit (if bumpOk then .success else .failure)
       s!"[{← nowUtcString}] Finished {bumpStep.label} (log file: {bumpLogPath})"
     if !bumpOk then
+      -- When `lake update` fails for a dependency bump, abort the entire run as an
+      -- infrastructure error. The dependency-update step is a network operation that can
+      -- fail transiently; a failure gives no evidence about the probed commit. Treating
+      -- it as a bad commit steers the search incorrectly. Exit with code 2 (tool error)
+      -- and do not record a `firstFailingCommit`.
+      if config.strategy.kind == .dep then
+        throw <| IO.userError
+          s!"`lake update` failed for commit {commit}. \
+             This is likely a transient network or registry error, not a problem with the code. \
+             Check the log ({bumpLogPath}) and retry the run."
       -- The build step hasn't run yet, so there is no build log to hand to detection.
       return .failure bumpStep.stage bumpLogPath none
   -- Verify phase: run each step in order, resuming from the saved point if applicable.
