@@ -14,6 +14,5 @@ def hopscotchFixes : Array AutoFix.Fix := #[AutoFix.Mathlib.moduleDeprecationFix
     Exit 0: session completed with no failures.
     Exit 1: a failure boundary was found (the tool ran successfully; the downstream failed).
     Exit 2: an unexpected error in the tool itself. -/
-def main (args : List String) : IO UInt32 := do
-  let command ← CLI.parseArgs hopscotchFixes args
-  CLI.dispatchCommand command hopscotchFixes IO.println
+def main (args : List String) : IO UInt32 :=
+  CLI.runCli hopscotchFixes args

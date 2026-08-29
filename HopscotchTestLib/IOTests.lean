@@ -122,24 +122,26 @@ private def «lake update failure returns exit code 2» : IO Unit := do
     makeDownstreamProject projectDir
     IO.FS.writeFile commitListPath "good1\nbadupdate\n"
     configureMockLake projectDir "fail-update"
-    -- Act: invoke the CLI dispatcher with the dep subcommand for the failing project.
-    -- This exercises the full entry path including the catch-all that returns 2.
-    let capturedOutput ← IO.mkRef ""
-    let output (line : String) : IO Unit := do
-      let current ← capturedOutput.get
-      capturedOutput.set (current ++ line)
-    let exitCode ← CLI.dispatchCommand
-      (.run {
-        itemSource := .file commitListPath
-        projectDir := projectDir
-        strategy := Runner.lakefileStrategy "batteries" (← mockLakeCommand)
-        quiet := true
-      })
-      #[]  -- no fixes needed for this test
-      output
+    -- Act: invoke the full CLI entry point with raw args (exercises full parsing and dispatch path).
+    let mockLakeExe ← mockLakeCommand
+    let exitCode ← CLI.runCli #[]  -- no fixes for this test
+      ["dep", "batteries", "--project-dir", projectDir.toString, "--file", commitListPath.toString,
+       "--lake-command", mockLakeExe]
+      ignoreOutput
     -- Assert the exit code is 2 (tool error), not 1 (failure boundary).
     assertEq (2 : UInt32) exitCode
       "lake update failure should return exit code 2 (tool error), not 1"
+
+/-- Scenario: a CLI parse error returns exit code 2 (tool error), not 1 (failure boundary). -/
+private def «parse error returns exit code 2» : IO Unit := do
+  withTempDir "hopscotch-parse-error" fun dir => do
+    let projectDir := dir / "downstream"
+    makeDownstreamProject projectDir
+    -- Act: invoke the CLI with an unknown flag, which causes a parse error.
+    let exitCode ← CLI.runCli #[] ["dep", "--unknown-flag"] ignoreOutput
+    -- Assert the exit code is 2 (tool error), not 1.
+    assertEq (2 : UInt32) exitCode
+      "parse errors should return exit code 2 (tool error), not 1"
 
 /-- Scenario: `lake update` failure during a build failure (not bump failure) is still a failure boundary. -/
 private def «lake update success with build failure stops normally» : IO Unit := do
@@ -1225,6 +1227,7 @@ def suite : TestSuite := #[
   test_case «stop at first build failure»,
   test_case «stop at first update failure»,
   test_case «lake update failure returns exit code 2»,
+  test_case «parse error returns exit code 2»,
   test_case «lake update success with build failure stops normally»,
   test_case «resume from failed commit and complete»,
   test_case «reject changed commit list on resume»,
